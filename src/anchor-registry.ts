@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "no
 import { appendFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { sessionClaimsDir } from "./paths";
 import { contentChecksum } from "./hashline/hasher";
 import { ANCHOR_COUNT, anchorAt } from "./hashline/alphabet";
@@ -24,6 +25,13 @@ export interface OwnedAnchor {
   checksum: string;
 }
 
+export interface AnchorSessionContext {
+  sessionManager?: {
+    getSessionFile?: () => string | undefined;
+    getSessionId?: () => string;
+  };
+}
+
 interface SessionState {
 	owned: Map<string, OwnedAnchor>;
 	served: Map<string, Map<string, string>>;
@@ -36,8 +44,10 @@ const SIDECAR_COMPACT_LINES = 5000;
 const SIDECAR_COMPACT_BYTES = 1024 * 1024;
 const SIDECAR_COMPACT_CHUNK = 5000;
 let currentKey: string | undefined;
-let currentSidecar: string | undefined;
+const sidecarByKey = new Map<string, string>();
+const pendingInits = new Map<string, Promise<void>>();
 const registries = new Map<string, SessionState>();
+const sessionScope = new AsyncLocalStorage<string>();
 
 function newSessionState(seed?: string): SessionState {
 	let probe = 0;
@@ -153,20 +163,12 @@ async function compactSidecarIfNeeded(sidecar: string, raw: string, sessionFile:
   }
 }
 
-export async function initRegistry(sessionFile: string | undefined): Promise<void> {
-  if (!sessionFile) {
-    currentKey = `__ephemeral__-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    currentSidecar = undefined;
-    registries.set(currentKey, newSessionState(currentKey));
-    return;
-  }
-  const key = sidecarKeyFor(sessionFile);
-  currentKey = key;
-  currentSidecar = sidecarPath(key);
+async function loadRegistryState(key: string, sessionFile: string): Promise<void> {
+  const sidecar = sidecarPath(key);
   let events: RegistryEvent[] = [];
   let rawLog = "";
   try {
-    rawLog = await readFile(currentSidecar, "utf-8");
+    rawLog = await readFile(sidecar, "utf-8");
     events = parseRegistryLog(rawLog);
   } catch (error) {
     if (errCode(error) !== "ENOENT") {
@@ -176,14 +178,15 @@ export async function initRegistry(sessionFile: string | undefined): Promise<voi
   const folded = foldRegistryEvents(events, `${key}:${process.pid}`);
   seedServedFromOwned(folded);
   registries.set(key, folded);
+  sidecarByKey.set(key, sidecar);
   if (rawLog.length > 0) {
-    await compactSidecarIfNeeded(currentSidecar, rawLog, sessionFile, folded);
+    await compactSidecarIfNeeded(sidecar, rawLog, sessionFile, folded);
   }
   try {
     await mkdir(sessionClaimsDir(), { recursive: true, mode: 0o700 });
     if (process.platform !== "win32") {
       try { await chmod(sessionClaimsDir(), 0o700); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry directory:", error); }
-      try { await chmod(currentSidecar, 0o600); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry sidecar:", error); }
+      try { await chmod(sidecar, 0o600); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry sidecar:", error); }
     }
     appendEvent({ kind: "session", sessionFile } satisfies RegistryEvent);
   } catch (error) {
@@ -191,17 +194,83 @@ export async function initRegistry(sessionFile: string | undefined): Promise<voi
   }
 }
 
+async function ensureRegistryForKey(key: string, sessionFile: string | undefined): Promise<void> {
+  currentKey = key;
+  if (registries.has(key)) return;
+  const pending = pendingInits.get(key);
+  if (pending) {
+    await pending;
+    return;
+  }
+  const promise = (async () => {
+    if (sessionFile === undefined) {
+      registries.set(key, newSessionState(key));
+      return;
+    }
+    await loadRegistryState(key, sessionFile);
+  })();
+  pendingInits.set(key, promise);
+  try {
+    await promise;
+  } finally {
+    pendingInits.delete(key);
+  }
+}
+
+export async function initRegistry(sessionFile: string | undefined): Promise<string> {
+  if (sessionFile === undefined) {
+    const key = `__ephemeral__-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    currentKey = key;
+    registries.set(key, newSessionState(key));
+    return key;
+  }
+  const key = sidecarKeyFor(sessionFile);
+  await ensureRegistryForKey(key, sessionFile);
+  return key;
+}
+
+export function sessionKeyFor(ctx: AnchorSessionContext | undefined): string | undefined {
+  const sessionFile = sessionFileFor(ctx);
+  if (sessionFile !== undefined) return sidecarKeyFor(sessionFile);
+  const sessionId = ctx?.sessionManager?.getSessionId?.();
+  if (typeof sessionId === "string" && sessionId.length > 0) return `ephemeral:${sessionId}`;
+  return undefined;
+}
+
+function sessionFileFor(ctx: AnchorSessionContext | undefined): string | undefined {
+  const sessionFile = ctx?.sessionManager?.getSessionFile?.();
+  return typeof sessionFile === "string" && sessionFile.length > 0 ? sessionFile : undefined;
+}
+
+export async function withAnchorSession<T>(ctx: AnchorSessionContext | undefined, fn: () => Promise<T> | T): Promise<T> {
+  const key = sessionKeyFor(ctx);
+  if (key === undefined) return fn();
+  const sessionFile = sessionFileFor(ctx);
+  return sessionScope.run(key, async () => {
+    await ensureRegistryForKey(key, sessionFile);
+    return fn();
+  });
+}
+
+function activeKey(): string | undefined {
+  return sessionScope.getStore() ?? currentKey;
+}
+
 function current(): SessionState | undefined {
-  if (!currentKey) return undefined;
-  return registries.get(currentKey);
+  const key = activeKey();
+  if (!key) return undefined;
+  return registries.get(key);
 }
 
 function appendEvent(event: RegistryEvent): void {
-  if (!currentSidecar) return;
+  const key = activeKey();
+  if (!key) return;
+  const sidecar = sidecarByKey.get(key);
+  if (!sidecar) return;
   try {
-    appendFileSync(currentSidecar, JSON.stringify(event) + "\n", "utf-8");
+    appendFileSync(sidecar, JSON.stringify(event) + "\n", "utf-8");
     if (process.platform !== "win32") {
-      try { chmodSync(currentSidecar, 0o600); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry sidecar:", error); }
+      try { chmodSync(sidecar, 0o600); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry sidecar:", error); }
     }
   } catch (error) {
     console.error("Failed to append registry event:", error);
@@ -331,7 +400,8 @@ export function ownersForPath(path: string): Map<string, string> {
 }
 
 export function ensureRegistry(): void {
-  if (currentKey && registries.has(currentKey)) return;
+  const key = activeKey();
+  if (key && registries.has(key)) return;
   initRegistry(undefined).catch(() => undefined);
 }
 
@@ -489,6 +559,7 @@ export function alignOwnership(
   const anchors: string[] = new Array(newChecksums.length);
   const freed: { anchor: string; checksum: string }[] = [];
   const minted: MintedAt[] = [];
+  const adopted: string[] = [];
   const log = (event: RegistryEvent): void => {
     if (!options?.shadow) appendEvent(event);
   };
@@ -531,6 +602,7 @@ export function alignOwnership(
           state.owned.set(fresh, { path, checksum });
           anchors[newIdx + k] = fresh;
         } else {
+          if (!entry) adopted.push(anchor);
           state.owned.set(anchor, { path, checksum });
           anchors[newIdx + k] = anchor;
         }
@@ -544,7 +616,8 @@ export function alignOwnership(
   for (let i = 0; i < anchors.length; i++) {
     rows.push([anchors[i]!, newChecksums[i]!]);
   }
-  if (minted.length > 0) log({ kind: "allocate", path, rows: rows.filter(([anchor]) => minted.some((m) => m.anchor === anchor)) });
+  const logged = new Set<string>([...minted.map((m) => m.anchor), ...adopted]);
+  if (logged.size > 0) log({ kind: "allocate", path, rows: rows.filter(([anchor]) => logged.has(anchor)) });
   if (freed.length > 0) log({ kind: "free", path, anchors: freed.map((f) => f.anchor) });
   return { anchors, freed: freed.map((f) => f.anchor), minted: minted.map((m) => m.anchor) };
 }
@@ -620,18 +693,23 @@ export function adoptAnchors(path: string, entries: Map<string, string>): void {
 		served = new Map();
 		state.served.set(path, served);
 	}
+	const adopted: Array<[string, string]> = [];
 	for (const [anchor, checksum] of entries) {
+		const existing = state.owned.get(anchor);
+		if (existing && existing.path !== path) continue;
 		state.owned.set(anchor, { path, checksum });
 		served.set(anchor, checksum);
+		adopted.push([anchor, checksum]);
 	}
-	if (entries.size > 0) {
-		appendEvent({ kind: "allocate", path, rows: [...entries] });
+	if (adopted.length > 0) {
+		appendEvent({ kind: "allocate", path, rows: adopted });
 	}
 }
 
 export function resetRegistryForTests(): void {
   currentKey = undefined;
-  currentSidecar = undefined;
+  sidecarByKey.clear();
+  pendingInits.clear();
   registries.clear();
 }
 

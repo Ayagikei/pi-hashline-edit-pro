@@ -17,7 +17,7 @@ import { abortIf, makePrepareArguments, numberedRead, visLines, splitLines } fro
 import { loadP, loadGuide } from "./prompts";
 import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { valAccess } from "./validation";
-import { markServed as markServedScoped } from "./anchor-registry";
+import { markServed as markServedScoped, withAnchorSession } from "./anchor-registry";
 import { buildServedMap } from "./served";
 import { Text } from "@earendil-works/pi-tui";
 const R_DESC = loadP("../prompts/read.md");
@@ -204,62 +204,64 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 		},
 
 		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			const rawPath = params.path;
-			const absolutePath = toCwd(rawPath, ctx.cwd);
+			return withAnchorSession(ctx, async () => {
+				const rawPath = params.path;
+				const absolutePath = toCwd(rawPath, ctx.cwd);
 
-			abortIf(signal);
-			await valAccess(absolutePath, rawPath);
+				abortIf(signal);
+				await valAccess(absolutePath, rawPath);
 
-			abortIf(signal);
-			const file = await loadFileKindAndText(absolutePath, { maxLines: MAX_HASH_LINES, displayPath: rawPath });
-			if (file.kind === "image") {
-				const builtinRead = createReadTool(ctx.cwd);
-				const executeBuiltinRead = builtinRead.execute as unknown as (
-					toolCallId: string,
-					input: typeof params,
-					abortSignal: typeof signal,
-					onUpdate: typeof _onUpdate,
-					context: typeof ctx,
-				) => ReturnType<typeof builtinRead.execute>;
-				return executeBuiltinRead(_toolCallId, params, signal, _onUpdate, ctx);
-			}
-      const { normalized, fileHashes, hadUtf8DecodeErrors, absolutePath: resolvedPath } = await readNormFile(
-        rawPath, ctx.cwd, { signal, preloadedFile: file, maxLines: MAX_HASH_LINES },
-      );
-			const fileLines = splitLines(normalized);
-			const preview = await fmtReadPreview(
-				normalized,
-				{
-					offset: params.offset,
-					limit: params.limit,
-				},
-				fileHashes,
-				resolvedPath,
-			);
-			markServedScoped(resolvedPath, buildServedMap(fileHashes, fileLines, preview.servedHashes), new Set(fileHashes));
-			const snapshotId = await safeSnapId(absolutePath, "read");
-			const previewText =
-				hadUtf8DecodeErrors
-					? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
-					: preview.text;
-
-			return {
-				content: [{ type: "text", text: previewText }],
-				details: {
-					truncation: preview.truncation,
-					snapshotId,
-					offset: params.offset ?? 1,
-					...(preview.nextOffset !== undefined
-						? { nextOffset: preview.nextOffset }
-						: {}),
-					metrics: {
-						truncated: !!preview.truncation,
-						...(preview.nextOffset !== undefined
-							? { next_offset: preview.nextOffset }
-							: {}),
+				abortIf(signal);
+				const file = await loadFileKindAndText(absolutePath, { maxLines: MAX_HASH_LINES, displayPath: rawPath });
+				if (file.kind === "image") {
+					const builtinRead = createReadTool(ctx.cwd);
+					const executeBuiltinRead = builtinRead.execute as unknown as (
+						toolCallId: string,
+						input: typeof params,
+						abortSignal: typeof signal,
+						onUpdate: typeof _onUpdate,
+						context: typeof ctx,
+					) => ReturnType<typeof builtinRead.execute>;
+					return executeBuiltinRead(_toolCallId, params, signal, _onUpdate, ctx);
+				}
+	      const { normalized, fileHashes, hadUtf8DecodeErrors, absolutePath: resolvedPath } = await readNormFile(
+	        rawPath, ctx.cwd, { signal, preloadedFile: file, maxLines: MAX_HASH_LINES },
+	      );
+				const fileLines = splitLines(normalized);
+				const preview = await fmtReadPreview(
+					normalized,
+					{
+						offset: params.offset,
+						limit: params.limit,
 					},
-				},
-			};
+					fileHashes,
+					resolvedPath,
+				);
+				markServedScoped(resolvedPath, buildServedMap(fileHashes, fileLines, preview.servedHashes), new Set(fileHashes));
+				const snapshotId = await safeSnapId(absolutePath, "read");
+				const previewText =
+					hadUtf8DecodeErrors
+						? `${preview.text}\n\n[Non-UTF-8 bytes shown as U+FFFD; editing rewrites the file as UTF-8.]`
+						: preview.text;
+
+				return {
+					content: [{ type: "text", text: previewText }],
+					details: {
+						truncation: preview.truncation,
+						snapshotId,
+						offset: params.offset ?? 1,
+						...(preview.nextOffset !== undefined
+							? { nextOffset: preview.nextOffset }
+							: {}),
+						metrics: {
+							truncated: !!preview.truncation,
+							...(preview.nextOffset !== undefined
+								? { next_offset: preview.nextOffset }
+								: {}),
+						},
+					},
+				};
+			});
 		},
 	});
 }

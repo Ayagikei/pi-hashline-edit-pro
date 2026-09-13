@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { HASH_CLASS } from "./hashline/alphabet";
 import { HASH_SEP } from "./hashline/hash";
-import { servedForPath } from "./anchor-registry";
+import { servedForPath, withAnchorSession } from "./anchor-registry";
 import { resolveInCwd } from "./fs-write";
 import { abortIf, splitLines, isRec, normalizeFilePath } from "./utils";
 
@@ -35,7 +35,7 @@ export async function servedHashEchoDenial(rawPath: string, content: string, cwd
 }
 
 export function registerWriteHook(pi: ExtensionAPI): void {
-  pi.on("tool_call", async (event, ctx) => {
+  pi.on("tool_call", async (event, ctx) => withAnchorSession(ctx, async () => {
     if (event.toolName !== "write") return;
     const input = event.input as Record<string, unknown> | undefined;
     if (!input || !isRec(input)) return;
@@ -53,5 +53,5 @@ export function registerWriteHook(pi: ExtensionAPI): void {
       console.error("write hook failed:", error);
     }
     return;
-  });
+  }));
 }

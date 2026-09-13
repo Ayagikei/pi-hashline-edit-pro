@@ -29,7 +29,7 @@ import {
   type RRState,
 } from "./replace-render";
 import { loadHashStore, type HashStore } from "./hash-store";
-import { adoptAnchors, servedForPath } from "./anchor-registry";
+import { adoptAnchors, servedForPath, withAnchorSession } from "./anchor-registry";
 import { resolveTarget } from "./fs-write";
 import { toCwd } from "./paths";
 import { noopPayloadKey, markBoundaryNoop, consumeBoundaryBypass, clearBoundaryBypass } from "./boundary-bypass";
@@ -275,78 +275,80 @@ export function buildToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): ToolDef
     renderCall: editRenderCallWrapper(compPreview),
     renderResult: editRenderResultWrapper,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const canonical = normReq(params);
-      assertReq(canonical);
-      const normalizedParams = canonical;
-      const targetPath = await resolveEditTargetWithRequirement({
-        removeFrom: normalizedParams.remove_from,
-        removeTo: normalizedParams.remove_to,
-        providedPath: normalizedParams.path,
-        cwd: ctx.cwd,
-      }).catch((error: unknown) => {
-        const member = batchMemberFor(_toolCallId);
-        if (member) noteBatchFailure(member, error);
-        else suffixPoisonCause(_toolCallId, error);
-        throw error;
-      });
-      return queuedEdit(targetPath, ctx.cwd, signal, async (absolutePath, mutationTargetPath) => {
-        const dedupMode = await getBoundaryDedupMode();
-        const dedupOn = dedupMode !== "off";
-        const noopPayload = noopPayloadKey(mutationTargetPath, normalizedParams.remove_from, normalizedParams.remove_to, normalizedParams.replacement_lines);
-        const boundaryBypass = dedupOn ? consumeBoundaryBypass(mutationTargetPath, noopPayload) : false;
-        const strictBoundaryDedup = dedupMode === "strict" && !boundaryBypass;
-        const member = batchMemberFor(_toolCallId);
-        if (!member) {
+      return withAnchorSession(ctx, async () => {
+        const canonical = normReq(params);
+        assertReq(canonical);
+        const normalizedParams = canonical;
+        const targetPath = await resolveEditTargetWithRequirement({
+          removeFrom: normalizedParams.remove_from,
+          removeTo: normalizedParams.remove_to,
+          providedPath: normalizedParams.path,
+          cwd: ctx.cwd,
+        }).catch((error: unknown) => {
+          const member = batchMemberFor(_toolCallId);
+          if (member) noteBatchFailure(member, error);
+          else suffixPoisonCause(_toolCallId, error);
+          throw error;
+        });
+        return queuedEdit(targetPath, ctx.cwd, signal, async (absolutePath, mutationTargetPath) => {
+          const dedupMode = await getBoundaryDedupMode();
+          const dedupOn = dedupMode !== "off";
+          const noopPayload = noopPayloadKey(mutationTargetPath, normalizedParams.remove_from, normalizedParams.remove_to, normalizedParams.replacement_lines);
+          const boundaryBypass = dedupOn ? consumeBoundaryBypass(mutationTargetPath, noopPayload) : false;
+          const strictBoundaryDedup = dedupMode === "strict" && !boundaryBypass;
+          const member = batchMemberFor(_toolCallId);
+          if (!member) {
+            try {
+              const pipe = await execPipeline(
+                targetPath,
+                normalizedParams,
+                ctx.cwd,
+                { accessMode: constants.R_OK | constants.W_OK, signal, skipBoundaryDedup: boundaryBypass },
+              );
+              const appliedWarnings = boundaryBypass
+                ? ["[W_BOUNDARY_BYPASS] Boundary dedup was off for this call and is back on."]
+                : [];
+              return await commitEdit(pipe, {
+                path: pipe.path,
+                absolutePath,
+                mutationTargetPath,
+                editAnchors: [normalizedParams.remove_from, normalizedParams.remove_to],
+                signal,
+                appliedWarnings,
+                onApplied: () => { if (dedupOn) clearBoundaryBypass(mutationTargetPath); },
+                onNoopDedup: dedupOn ? () => markBoundaryNoop(mutationTargetPath, noopPayload) : undefined,
+              });
+            } catch (error) {
+              const detail = error instanceof Error ? error.message : String(error);
+              if (boundaryBypass && !detail.includes("File was written;")) markBoundaryNoop(mutationTargetPath, noopPayload);
+              throw error;
+            }
+          }
+          let built: { edit: HEdit; warnings: string[] };
           try {
-            const pipe = await execPipeline(
-              targetPath,
-              normalizedParams,
-              ctx.cwd,
-              { accessMode: constants.R_OK | constants.W_OK, signal, skipBoundaryDedup: boundaryBypass },
-            );
-            const appliedWarnings = boundaryBypass
-              ? ["[W_BOUNDARY_BYPASS] Boundary dedup was off for this call and is back on."]
-              : [];
-            return await commitEdit(pipe, {
-              path: pipe.path,
-              absolutePath,
-              mutationTargetPath,
-              editAnchors: [normalizedParams.remove_from, normalizedParams.remove_to],
-              signal,
-              appliedWarnings,
-              onApplied: () => { if (dedupOn) clearBoundaryBypass(mutationTargetPath); },
-              onNoopDedup: dedupOn ? () => markBoundaryNoop(mutationTargetPath, noopPayload) : undefined,
-            });
+            built = buildReplaceHEdit(normalizedParams);
           } catch (error) {
-            const detail = error instanceof Error ? error.message : String(error);
-            if (boundaryBypass && !detail.includes("File was written;")) markBoundaryNoop(mutationTargetPath, noopPayload);
+            noteBatchFailure(member, error);
+            if (boundaryBypass) markBoundaryNoop(mutationTargetPath, noopPayload);
             throw error;
           }
-        }
-        let built: { edit: HEdit; warnings: string[] };
-        try {
-          built = buildReplaceHEdit(normalizedParams);
-        } catch (error) {
-          noteBatchFailure(member, error);
-          if (boundaryBypass) markBoundaryNoop(mutationTargetPath, noopPayload);
-          throw error;
-        }
-        const appliedWarnings = boundaryBypass
-          ? ["[W_BOUNDARY_BYPASS] Boundary dedup was off for this call and is back on."]
-          : [];
-        return executeBatchMember({
-          kind: "replace",
-          member,
-          targetPath,
-          mutationTargetPath,
-          cwd: ctx.cwd,
-          signal,
-          hedit: built.edit,
-          extraWarnings: [...built.warnings, ...appliedWarnings],
-          skipBoundaryDedup: boundaryBypass,
-          strictBoundaryDedup,
-          noopPayload,
-          bypassConsumed: boundaryBypass,
+          const appliedWarnings = boundaryBypass
+            ? ["[W_BOUNDARY_BYPASS] Boundary dedup was off for this call and is back on."]
+            : [];
+          return executeBatchMember({
+            kind: "replace",
+            member,
+            targetPath,
+            mutationTargetPath,
+            cwd: ctx.cwd,
+            signal,
+            hedit: built.edit,
+            extraWarnings: [...built.warnings, ...appliedWarnings],
+            skipBoundaryDedup: boundaryBypass,
+            strictBoundaryDedup,
+            noopPayload,
+            bypassConsumed: boundaryBypass,
+          });
         });
       });
     },

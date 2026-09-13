@@ -20,7 +20,7 @@ import {
   adjustDiffContextLines,
 } from "./src/config";
 import { loadHashStore, persistSnapshot, pruneMissing } from "./src/hash-store";
-import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped } from "./src/anchor-registry";
+import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped, sessionKeyFor, withAnchorSession } from "./src/anchor-registry";
 import { buildServedMap } from "./src/served";
 import { clearBoundaryBypass } from "./src/boundary-bypass";
 import { finalizeTurn, planAssistantMessage } from "./src/batch";
@@ -58,7 +58,7 @@ export default function (pi: ExtensionAPI): void {
     }
   }
 
-  pi.on("session_start", async (_event, ctx) => {
+  pi.on("session_start", async (_event, ctx) => withAnchorSession(ctx, async () => {
     const active = pi.getActiveTools();
     grepWasActive = active.includes("grep");
     pi.setActiveTools(active.filter((t) => t !== "edit"));
@@ -73,7 +73,7 @@ export default function (pi: ExtensionAPI): void {
       });
     const sessionManager = (ctx as { sessionManager?: { getSessionFile?: () => string | undefined } }).sessionManager;
     const sessionFile = sessionManager?.getSessionFile?.();
-    await initRegistry(sessionFile);
+    if (sessionKeyFor(ctx) === undefined) await initRegistry(sessionFile);
     await gcRegistrySidecars();
     const { config, corrupted } = await readConfigWithStatus();
     if (corrupted && (ctx as { hasUI?: boolean }).hasUI) ctx.ui.notify("Hashline config was corrupt and was reset to defaults", "warning");
@@ -88,7 +88,7 @@ export default function (pi: ExtensionAPI): void {
     if (debugValue === "1" || debugValue === "true") {
       ctx.ui.notify(`Hashline Edit mode active`, "info");
     }
-  });
+  }));
 
   pi.registerCommand("hashline-config", {
     description: "Open the hashline settings window (auto-read, diff context, grep, path, strict input, dedup)",
@@ -127,18 +127,18 @@ export default function (pi: ExtensionAPI): void {
 
   pi.registerCommand("clear-anchors", {
     description: "Clear the session's anchor claims (path-free resolution state); anchors are re-claimed on the next read",
-    handler: async (_args, ctx) => {
+    handler: async (_args, ctx) => withAnchorSession(ctx, async () => {
       clearRegistry();
       ctx.ui.notify(`Anchor claims cleared for this session`, "info");
-    },
+    }),
   });
-  pi.on("message_end", async (event, ctx) => {
+  pi.on("message_end", async (event, ctx) => withAnchorSession(ctx, async () => {
     try {
       await planAssistantMessage(event.message, ctx.cwd);
     } catch (error) {
       console.error("Failed to plan edit batch:", error);
     }
-  });
+  }));
   pi.on("turn_end", async (event) => {
     try {
       const ids = (event.toolResults ?? []).map((result) => (result as { toolCallId?: unknown }).toolCallId).filter((id): id is string => typeof id === "string");
@@ -147,7 +147,7 @@ export default function (pi: ExtensionAPI): void {
       console.error("Failed to finalize edit batch:", error);
     }
   });
-  pi.on("tool_result", async (event, ctx) => {
+  pi.on("tool_result", async (event, ctx) => withAnchorSession(ctx, async () => {
     if (event.isError) return;
 
     if (event.toolName === "write") {
@@ -237,5 +237,5 @@ export default function (pi: ExtensionAPI): void {
         },
       ],
     };
-  });
+  }));
 }

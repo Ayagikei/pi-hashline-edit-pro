@@ -18,8 +18,11 @@ import {
   foldRegistryEvents,
   mintAnchor,
   gcRegistrySidecars,
+  sessionKeyFor,
+  withAnchorSession,
 } from "../../src/anchor-registry";
 import { sessionClaimsDir } from "../../src/paths";
+import { lineHashes } from "../../src/hashline";
 import { useTestHome } from "../support/fixtures";
 
 useTestHome();
@@ -234,5 +237,119 @@ describe("anchor registry", () => {
     await gcRegistrySidecars();
     await expect(readFile(deadSidecar, "utf-8")).rejects.toThrow();
     await expect(readFile(sessionFile, "utf-8")).resolves.toBe("");
+  });
+
+  it("scopes ownership to the calling session", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sessionA = join(sessionClaimsDir(), "scope-a.jsonl");
+    const sessionB = join(sessionClaimsDir(), "scope-b.jsonl");
+    await writeFile(sessionA, "", "utf-8");
+    await writeFile(sessionB, "", "utf-8");
+    const ctxA = { sessionManager: { getSessionFile: () => sessionA, getSessionId: () => "scope-a" } };
+    const ctxB = { sessionManager: { getSessionFile: () => sessionB, getSessionId: () => "scope-b" } };
+
+    const anchorA = await withAnchorSession(ctxA, () => allocateAnchor("a.ts", "ckA"));
+    const anchorB = await withAnchorSession(ctxB, () => allocateAnchor("b.ts", "ckB"));
+
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorA))).toEqual({ path: "a.ts", checksum: "ckA" });
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorB))).toBeUndefined();
+    expect(await withAnchorSession(ctxB, () => ownerOf(anchorB))).toEqual({ path: "b.ts", checksum: "ckB" });
+    expect(await withAnchorSession(ctxB, () => ownerOf(anchorA))).toBeUndefined();
+  });
+
+  it("routes registry events to the calling session sidecar", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sessionA = join(sessionClaimsDir(), "route-a.jsonl");
+    const sessionB = join(sessionClaimsDir(), "route-b.jsonl");
+    await writeFile(sessionA, "", "utf-8");
+    await writeFile(sessionB, "", "utf-8");
+    const ctxA = { sessionManager: { getSessionFile: () => sessionA, getSessionId: () => "route-a" } };
+    const ctxB = { sessionManager: { getSessionFile: () => sessionB, getSessionId: () => "route-b" } };
+
+    await withAnchorSession(ctxA, () => allocateAnchor("a.ts", "ckA"));
+    await withAnchorSession(ctxB, () => allocateAnchor("b.ts", "ckB"));
+
+    const logA = parseRegistryLog(await readFile(join(sessionClaimsDir(), `${sessionKeyFor(ctxA)!}.registry.jsonl`), "utf-8"));
+    const logB = parseRegistryLog(await readFile(join(sessionClaimsDir(), `${sessionKeyFor(ctxB)!}.registry.jsonl`), "utf-8"));
+    expect(logA.some((e) => e.kind === "allocate" && e.path === "a.ts")).toBe(true);
+    expect(logA.some((e) => e.kind === "allocate" && e.path === "b.ts")).toBe(false);
+    expect(logB.some((e) => e.kind === "allocate" && e.path === "b.ts")).toBe(true);
+    expect(logB.some((e) => e.kind === "allocate" && e.path === "a.ts")).toBe(false);
+  });
+
+  it("initializes a session once per process", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sessionFile = join(sessionClaimsDir(), "once.jsonl");
+    const ctx = { sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "once" } };
+    const anchor = await withAnchorSession(ctx, () => allocateAnchor("a.ts", "ck"));
+    await withAnchorSession(ctx, () => undefined);
+    await withAnchorSession(ctx, () => undefined);
+    expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toEqual({ path: "a.ts", checksum: "ck" });
+    const sessions = parseRegistryLog(await readFile(join(sessionClaimsDir(), `${sessionKeyFor(ctx)!}.registry.jsonl`), "utf-8")).filter((e) => e.kind === "session");
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("shares one initialization across concurrent first calls", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sessionFile = join(sessionClaimsDir(), "concurrent.jsonl");
+    const ctx = { sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "concurrent" } };
+    const [first, second] = await Promise.all([
+      withAnchorSession(ctx, () => allocateAnchor("a.ts", "ckA")),
+      withAnchorSession(ctx, () => allocateAnchor("b.ts", "ckB")),
+    ]);
+    expect(first).not.toBe(second);
+    expect(ownerOf(first)).toEqual({ path: "a.ts", checksum: "ckA" });
+    expect(ownerOf(second)).toEqual({ path: "b.ts", checksum: "ckB" });
+    const sessions = parseRegistryLog(await readFile(join(sessionClaimsDir(), `${sessionKeyFor(ctx)!}.registry.jsonl`), "utf-8")).filter((e) => e.kind === "session");
+    expect(sessions).toHaveLength(1);
+  });
+
+  it("persists adopted anchors so a restart restores them", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sessionA = join(sessionClaimsDir(), "adopt-a.jsonl");
+    const sessionB = join(sessionClaimsDir(), "adopt-b.jsonl");
+    await writeFile(sessionA, "", "utf-8");
+    await writeFile(sessionB, "", "utf-8");
+    const ctxA = { sessionManager: { getSessionFile: () => sessionA, getSessionId: () => "adopt-a" } };
+    const ctxB = { sessionManager: { getSessionFile: () => sessionB, getSessionId: () => "adopt-b" } };
+    const filePath = join(sessionClaimsDir(), "adopted.txt");
+    const content = "alpha\nbeta\ngamma\n";
+
+    const anchorsA = await withAnchorSession(ctxA, () => lineHashes(content, filePath));
+    resetRegistryForTests();
+    const anchorsB = await withAnchorSession(ctxB, () => lineHashes(content, filePath));
+    expect(anchorsB).toEqual(anchorsA);
+
+    resetRegistryForTests();
+    await initRegistry(sessionB);
+    for (const anchor of anchorsB) {
+      expect(ownerOf(anchor)).toEqual({ path: filePath, checksum: expect.any(String) });
+    }
+  });
+
+  it("isolates file-less sessions by session id", async () => {
+    const ctxA = { sessionManager: { getSessionId: () => "ephemeral-a" } };
+    const ctxB = { sessionManager: { getSessionId: () => "ephemeral-b" } };
+    const anchorA = await withAnchorSession(ctxA, () => allocateAnchor("a.ts", "ckA"));
+    const anchorB = await withAnchorSession(ctxB, () => allocateAnchor("b.ts", "ckB"));
+    expect(anchorA).not.toBe(anchorB);
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorA))).toBeDefined();
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorB))).toBeUndefined();
+  });
+
+  it("treats an empty session file as file-less", async () => {
+    const ctxA = { sessionManager: { getSessionFile: () => "", getSessionId: () => "empty-file-a" } };
+    const ctxB = { sessionManager: { getSessionFile: () => "", getSessionId: () => "empty-file-b" } };
+    const anchorA = await withAnchorSession(ctxA, () => allocateAnchor("a.ts", "ckA"));
+    const anchorB = await withAnchorSession(ctxB, () => allocateAnchor("b.ts", "ckB"));
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorA))).toBeDefined();
+    expect(await withAnchorSession(ctxA, () => ownerOf(anchorB))).toBeUndefined();
+  });
+
+  it("never moves an owned anchor to another file", () => {
+    const anchor = allocateAnchor("a.ts", "ckA");
+    adoptAnchors("b.ts", new Map([[anchor, "ckB"]]));
+    expect(ownerOf(anchor)).toEqual({ path: "a.ts", checksum: "ckA" });
+    expect(servedForPath("b.ts")?.has(anchor) ?? false).toBe(false);
   });
 });
