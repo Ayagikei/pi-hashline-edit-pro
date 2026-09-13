@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { appendFileSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -32,10 +32,125 @@ export interface AnchorSessionContext {
   };
 }
 
+interface OwnedAnchorMap {
+  readonly size: number;
+  has(anchor: string): boolean;
+  get(anchor: string): OwnedAnchor | undefined;
+  set(anchor: string, entry: OwnedAnchor): unknown;
+  delete(anchor: string): boolean;
+  clear(): void;
+  keys(): Iterable<string>;
+  values(): Iterable<OwnedAnchor>;
+  entries(): Iterable<[string, OwnedAnchor]>;
+  [Symbol.iterator](): IterableIterator<[string, OwnedAnchor]>;
+}
+
+interface AnchorMintedSet {
+  has(anchor: string): boolean;
+  add(anchor: string): unknown;
+  [Symbol.iterator](): IterableIterator<string>;
+}
+
+class ShadowOwnedMap implements OwnedAnchorMap {
+  private readonly parent: OwnedAnchorMap;
+  private readonly overrides = new Map<string, OwnedAnchor | undefined>();
+
+  constructor(parent: OwnedAnchorMap) {
+    this.parent = parent;
+  }
+
+  has(anchor: string): boolean {
+    return this.overrides.has(anchor) ? this.overrides.get(anchor) !== undefined : this.parent.has(anchor);
+  }
+
+  get(anchor: string): OwnedAnchor | undefined {
+    return this.overrides.has(anchor) ? this.overrides.get(anchor) : this.parent.get(anchor);
+  }
+
+  set(anchor: string, entry: OwnedAnchor): this {
+    this.overrides.set(anchor, entry);
+    return this;
+  }
+
+  delete(anchor: string): boolean {
+    const owned = this.has(anchor);
+    this.overrides.set(anchor, undefined);
+    return owned;
+  }
+
+  clear(): void {
+    for (const anchor of this.parent.keys()) this.overrides.set(anchor, undefined);
+    for (const [anchor, entry] of this.overrides) {
+      if (entry !== undefined && !this.parent.has(anchor)) this.overrides.delete(anchor);
+    }
+  }
+
+  get size(): number {
+    let count = 0;
+    for (const _entry of this) count += 1;
+    return count;
+  }
+
+  *keys(): IterableIterator<string> {
+    for (const [anchor] of this.merged()) yield anchor;
+  }
+
+  *values(): IterableIterator<OwnedAnchor> {
+    for (const [, entry] of this.merged()) yield entry;
+  }
+
+  *entries(): IterableIterator<[string, OwnedAnchor]> {
+    yield* this.merged();
+  }
+
+  *[Symbol.iterator](): IterableIterator<[string, OwnedAnchor]> {
+    yield* this.merged();
+  }
+
+  private *merged(): IterableIterator<[string, OwnedAnchor]> {
+    for (const [anchor, entry] of this.parent) {
+      if (this.overrides.has(anchor)) {
+        const override = this.overrides.get(anchor);
+        if (override !== undefined) yield [anchor, override];
+      } else {
+        yield [anchor, entry];
+      }
+    }
+    for (const [anchor, entry] of this.overrides) {
+      if (entry !== undefined && !this.parent.has(anchor)) yield [anchor, entry];
+    }
+  }
+}
+
+class ShadowMintedSet implements AnchorMintedSet {
+  private readonly parent: AnchorMintedSet;
+  private readonly added = new Set<string>();
+
+  constructor(parent: AnchorMintedSet) {
+    this.parent = parent;
+  }
+
+  has(anchor: string): boolean {
+    return this.added.has(anchor) || this.parent.has(anchor);
+  }
+
+  add(anchor: string): this {
+    this.added.add(anchor);
+    return this;
+  }
+
+  *[Symbol.iterator](): IterableIterator<string> {
+    yield* this.parent;
+    for (const anchor of this.added) {
+      if (!this.parent.has(anchor)) yield anchor;
+    }
+  }
+}
+
 interface SessionState {
-	owned: Map<string, OwnedAnchor>;
+	owned: OwnedAnchorMap;
 	served: Map<string, Map<string, string>>;
-	everMinted: Set<string>;
+	everMinted: AnchorMintedSet;
 	probe: number;
 }
 
@@ -43,9 +158,12 @@ const SIDECAR_SUFFIX = ".registry.jsonl";
 const SIDECAR_COMPACT_LINES = 5000;
 const SIDECAR_COMPACT_BYTES = 1024 * 1024;
 const SIDECAR_COMPACT_CHUNK = 5000;
+const SIDECAR_HEADER_BYTES = 64 * 1024;
+const SIDECAR_HEADER_CHUNK = 4096;
 let currentKey: string | undefined;
 const sidecarByKey = new Map<string, string>();
 const pendingInits = new Map<string, Promise<void>>();
+const loadTokens = new Map<string, object>();
 const registries = new Map<string, SessionState>();
 const sessionScope = new AsyncLocalStorage<string>();
 
@@ -163,7 +281,7 @@ async function compactSidecarIfNeeded(sidecar: string, raw: string, sessionFile:
   }
 }
 
-async function loadRegistryState(key: string, sessionFile: string): Promise<void> {
+async function loadRegistryState(key: string, sessionFile: string, token: object): Promise<void> {
   const sidecar = sidecarPath(key);
   let events: RegistryEvent[] = [];
   let rawLog = "";
@@ -176,6 +294,7 @@ async function loadRegistryState(key: string, sessionFile: string): Promise<void
     }
   }
   const folded = foldRegistryEvents(events, `${key}:${process.pid}`);
+  if (loadTokens.get(key) !== token) return;
   seedServedFromOwned(folded);
   registries.set(key, folded);
   sidecarByKey.set(key, sidecar);
@@ -202,12 +321,14 @@ async function ensureRegistryForKey(key: string, sessionFile: string | undefined
     await pending;
     return;
   }
+  const token: object = {};
+  loadTokens.set(key, token);
   const promise = (async () => {
     if (sessionFile === undefined) {
       registries.set(key, newSessionState(key));
       return;
     }
-    await loadRegistryState(key, sessionFile);
+    await loadRegistryState(key, sessionFile, token);
   })();
   pendingInits.set(key, promise);
   try {
@@ -405,11 +526,11 @@ export function ensureRegistry(): void {
   initRegistry(undefined).catch(() => undefined);
 }
 
-function cloneState(state: SessionState): SessionState {
+export function shadowStateFrom(state: SessionState): SessionState {
 	return {
-		owned: new Map(state.owned),
-		served: new Map([...state.served].map(([path, served]) => [path, new Map(served)])),
-		everMinted: new Set(state.everMinted),
+		owned: new ShadowOwnedMap(state.owned),
+		served: new Map(),
+		everMinted: new ShadowMintedSet(state.everMinted),
 		probe: state.probe,
 	};
 }
@@ -486,7 +607,7 @@ export function alignOwnershipWithSpans(
   spans: { start: number; end: number; replacementCount: number }[],
   options?: { shadow?: boolean },
 ): Aligned {
-  const state = options?.shadow ? cloneState(current()!) : current()!;
+  const state = options?.shadow ? shadowStateFrom(current()!) : current()!;
   const freed: { anchor: string; checksum: string }[] = [];
   const minted: MintedAt[] = [];
   const log = (event: RegistryEvent): void => {
@@ -555,7 +676,7 @@ export function alignOwnership(
   newChecksums: string[],
   options?: { shadow?: boolean },
 ): Aligned {
-  const state = options?.shadow ? cloneState(current()!) : current()!;
+  const state = options?.shadow ? shadowStateFrom(current()!) : current()!;
   const anchors: string[] = new Array(newChecksums.length);
   const freed: { anchor: string; checksum: string }[] = [];
   const minted: MintedAt[] = [];
@@ -662,7 +783,7 @@ export async function allocateFileAnchors(
   const aligned: Aligned = prevAnchors
     ? alignOwnership(path, prevAnchors, prevChecksums, checksums, { shadow })
     : (() => {
-        const state = shadow ? cloneState(current()!) : current()!;
+        const state = shadow ? shadowStateFrom(current()!) : current()!;
         const reuseIndex = fingerprintIndex(state, path);
         const reuseTaken = new Map<string, number>();
         const anchors: string[] = checksums.map((checksum) => {
@@ -710,7 +831,35 @@ export function resetRegistryForTests(): void {
   currentKey = undefined;
   sidecarByKey.clear();
   pendingInits.clear();
+  loadTokens.clear();
   registries.clear();
+}
+
+export async function readSidecarHeader(sidecar: string): Promise<string> {
+  const handle = await open(sidecar, "r");
+  const buffer = Buffer.alloc(SIDECAR_HEADER_BYTES);
+  try {
+    let readBytes = 0;
+    while (readBytes < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, readBytes, Math.min(SIDECAR_HEADER_CHUNK, buffer.length - readBytes), readBytes);
+      if (bytesRead === 0) break;
+      readBytes += bytesRead;
+      const text = buffer.subarray(0, readBytes).toString("utf-8");
+      const newline = text.indexOf("\n");
+      if (newline >= 0) return text.slice(0, newline);
+    }
+    return buffer.subarray(0, readBytes).toString("utf-8");
+  } finally {
+    await handle.close();
+  }
+}
+
+export function releaseRegistrySession(key: string): void {
+  loadTokens.delete(key);
+  if (currentKey === key) currentKey = undefined;
+  pendingInits.delete(key);
+  sidecarByKey.delete(key);
+  registries.delete(key);
 }
 
 export async function gcRegistrySidecars(): Promise<void> {
@@ -735,8 +884,7 @@ export async function gcRegistrySidecars(): Promise<void> {
     if (!name.endsWith(SIDECAR_SUFFIX)) continue;
     const sidecar = join(sessionClaimsDir(), name);
     try {
-      const raw = await readFile(sidecar, "utf-8");
-      const header = JSON.parse(raw.split("\n")[0] ?? "{}") as { kind?: string; sessionFile?: string };
+      const header = JSON.parse(await readSidecarHeader(sidecar) || "{}") as { kind?: string; sessionFile?: string };
       if (header.kind !== "session" || !header.sessionFile) continue;
       await stat(header.sessionFile);
     } catch (error) {

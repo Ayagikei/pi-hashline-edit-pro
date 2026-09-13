@@ -20,7 +20,7 @@ import {
   adjustDiffContextLines,
 } from "./src/config";
 import { loadHashStore, persistSnapshot, pruneMissing } from "./src/hash-store";
-import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped, sessionKeyFor, withAnchorSession } from "./src/anchor-registry";
+import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped, sessionKeyFor, withAnchorSession, releaseRegistrySession } from "./src/anchor-registry";
 import { buildServedMap } from "./src/served";
 import { clearBoundaryBypass } from "./src/boundary-bypass";
 import { finalizeTurn, planAssistantMessage } from "./src/batch";
@@ -89,6 +89,15 @@ export default function (pi: ExtensionAPI): void {
       ctx.ui.notify(`Hashline Edit mode active`, "info");
     }
   }));
+
+  pi.on("session_shutdown", async (_event, ctx) => {
+    try {
+      const key = sessionKeyFor(ctx);
+      if (key !== undefined) releaseRegistrySession(key);
+    } catch (error) {
+      console.error("Failed to release anchor registry session:", error);
+    }
+  });
 
   pi.registerCommand("hashline-config", {
     description: "Open the hashline settings window (auto-read, diff context, grep, path, strict input, dedup)",

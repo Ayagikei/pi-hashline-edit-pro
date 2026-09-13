@@ -332,6 +332,10 @@ function genSpanDiff(
   return { diff: output.join("\n"), firstChangedLine, lineNumbers };
 }
 
+function overDiffInputLimit(oldContent: string, newContent: string): boolean {
+  return Buffer.byteLength(oldContent, "utf-8") + Buffer.byteLength(newContent, "utf-8") > MAX_DIFF_INPUT_BYTES;
+}
+
 export function genDiff(
   oldContent: string,
   newContent: string,
@@ -350,7 +354,7 @@ export function genDiff(
       return { diff, firstChangedLine: anchored.firstChangedLine, lineNumbers: anchored.lineNumbers };
     }
   }
-  if (!limits?.unlimited && Buffer.byteLength(oldContent, "utf-8") + Buffer.byteLength(newContent, "utf-8") > MAX_DIFF_INPUT_BYTES) {
+  if (!limits?.unlimited && overDiffInputLimit(oldContent, newContent)) {
     const guardedRange = changedRange(oldContent, newContent);
     const guardNote = `[diff truncated at ${formatSize(maxBytes)}; use read to see the rest.]`;
     if (!guardedRange || !newContentHashes) {
@@ -580,6 +584,9 @@ export function genPatch(
   const patchOpts: Record<string, unknown> = { context: 4 };
   const ho = (Diff as unknown as Record<string, unknown>).FILE_HEADERS_ONLY;
   if (ho !== undefined) patchOpts.headerOptions = ho;
+  if (!limits?.unlimited && overDiffInputLimit(oldContent, newContent)) {
+    return { patch: "", truncated: true };
+  }
   const full = (Diff.createTwoFilesPatch(path, path, oldContent, newContent, undefined, undefined, patchOpts as never) as unknown as string) ?? "";
   const maxLineBytes = limits?.unlimited ? Number.POSITIVE_INFINITY : (limits?.maxLineBytes ?? DEFAULT_MAX_BYTES);
   const maxBytes = limits?.unlimited ? Number.POSITIVE_INFINITY : (limits?.maxBytes ?? DEFAULT_MAX_BYTES);

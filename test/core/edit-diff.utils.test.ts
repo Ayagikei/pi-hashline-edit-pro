@@ -249,6 +249,14 @@ describe("genPatch - output limits", () => {
     expect(result.patch).not.toContain("l799 ");
     expect(Buffer.byteLength(result.patch, "utf-8")).toBeLessThan(60 * 1024);
   });
+
+  it("skips patch generation when the input pair exceeds the diff guard", () => {
+    const oldContent = Array.from({ length: 20000 }, () => "x".repeat(60)).join("\n");
+    const newContent = `${oldContent}!`;
+    const result = genPatch("huge.txt", oldContent, newContent);
+    expect(result.truncated).toBe(true);
+    expect(result.patch).toBe("");
+  });
 });
 
 describe("genDiff - oversized input guard", () => {

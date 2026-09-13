@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdir, readFile, readdir, writeFile } from "fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
   initRegistry,
@@ -13,12 +13,16 @@ import {
   markServed,
   markServed as markServedScoped,
   adoptAnchors,
+  alignOwnership,
   alignOwnershipWithSpans,
+  readSidecarHeader,
   parseRegistryLog,
   foldRegistryEvents,
   mintAnchor,
   gcRegistrySidecars,
   sessionKeyFor,
+  releaseRegistrySession,
+  shadowStateFrom,
   withAnchorSession,
 } from "../../src/anchor-registry";
 import { sessionClaimsDir } from "../../src/paths";
@@ -194,6 +198,61 @@ describe("anchor registry", () => {
     expect(aligned.minted.every((m) => [a1, a2, a3, a4].indexOf(m) < 0)).toBe(true);
   });
 
+  it("maps shadow allocations identically to real allocations", () => {
+    const a1 = allocateAnchor("m.ts", "ckA");
+    const a2 = allocateAnchor("m.ts", "ckB");
+    const a3 = allocateAnchor("m.ts", "ckC");
+    const span = [{ start: 1, end: 1, replacementCount: 1 }];
+    const before = [...ownersForPath("m.ts").entries()];
+    const shadow = alignOwnershipWithSpans("m.ts", [a1, a2, a3], ["ckA", "ckB", "ckC"], ["ckA", "ckX", "ckC"], span, { shadow: true });
+    expect([...ownersForPath("m.ts").entries()]).toEqual(before);
+    const real = alignOwnershipWithSpans("m.ts", [a1, a2, a3], ["ckA", "ckB", "ckC"], ["ckA", "ckX", "ckC"], span);
+    expect(shadow.anchors).toEqual(real.anchors);
+    expect(shadow.minted).toEqual(real.minted);
+    expect(shadow.freed).toEqual(real.freed);
+  });
+
+  it("maps shadow diff alignments identically to real alignments", () => {
+    const a1 = allocateAnchor("d.ts", "ckA");
+    const a2 = allocateAnchor("d.ts", "ckB");
+    const a3 = allocateAnchor("d.ts", "ckC");
+    const before = [...ownersForPath("d.ts").entries()];
+    const shadow = alignOwnership("d.ts", [a1, a2, a3], ["ckA", "ckB", "ckC"], ["ckA", "ckX", "ckC"], { shadow: true });
+    expect([...ownersForPath("d.ts").entries()]).toEqual(before);
+    const real = alignOwnership("d.ts", [a1, a2, a3], ["ckA", "ckB", "ckC"], ["ckA", "ckX", "ckC"]);
+    expect(shadow.anchors).toEqual(real.anchors);
+    expect(shadow.minted).toEqual(real.minted);
+    expect(shadow.freed).toEqual(real.freed);
+  });
+
+  it("shadows session state without mutating the real registry", () => {
+    const real = foldRegistryEvents(parseRegistryLog([
+      '{"kind":"allocate","path":"s.ts","rows":[["AaAa","ckA"]]}',
+      '{"kind":"minted","anchors":["BbBb"]}',
+    ].join("\n")));
+    const shadow = shadowStateFrom(real);
+    expect(shadow.served.size).toBe(0);
+    expect(shadow.owned.get("AaAa")).toEqual({ path: "s.ts", checksum: "ckA" });
+    shadow.owned.set("AaAa", { path: "t.ts", checksum: "ckZ" });
+    expect(shadow.owned.get("AaAa")).toEqual({ path: "t.ts", checksum: "ckZ" });
+    expect(real.owned.get("AaAa")).toEqual({ path: "s.ts", checksum: "ckA" });
+    shadow.owned.set("CcCc", { path: "s.ts", checksum: "ckC" });
+    expect(shadow.owned.delete("AaAa")).toBe(true);
+    expect(shadow.owned.delete("ZzZz")).toBe(false);
+    expect(shadow.owned.has("AaAa")).toBe(false);
+    expect(real.owned.has("AaAa")).toBe(true);
+    expect(shadow.owned.size).toBe(1);
+    expect([...shadow.owned.keys()]).toEqual(["CcCc"]);
+    expect([...shadow.owned.values()]).toEqual([{ path: "s.ts", checksum: "ckC" }]);
+    expect([...shadow.owned.entries()]).toEqual([["CcCc", { path: "s.ts", checksum: "ckC" }]]);
+    shadow.owned.clear();
+    expect(shadow.owned.size).toBe(0);
+    expect(real.owned.size).toBe(1);
+    expect(shadow.everMinted.has("BbBb")).toBe(true);
+    shadow.everMinted.add("DdDd");
+    expect(real.everMinted.has("DdDd")).toBe(false);
+    expect([...shadow.everMinted]).toEqual(["AaAa", "BbBb", "DdDd"]);
+  });
 
   it("parses and folds the ownership log", () => {
     const events = parseRegistryLog([
@@ -237,6 +296,55 @@ describe("anchor registry", () => {
     await gcRegistrySidecars();
     await expect(readFile(deadSidecar, "utf-8")).rejects.toThrow();
     await expect(readFile(sessionFile, "utf-8")).resolves.toBe("");
+  });
+
+  it("reads a sidecar header longer than one read chunk", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "long-header.registry.jsonl");
+    const normal = JSON.stringify({ kind: "session", sessionFile: join(sessionClaimsDir(), "header-live.jsonl") });
+    const long = JSON.stringify({ kind: "session", sessionFile: "x".repeat(20000) });
+    await writeFile(sidecar, `${normal}\n`, "utf-8");
+    await expect(readSidecarHeader(sidecar)).resolves.toBe(normal);
+    await writeFile(sidecar, `${long}\n`, "utf-8");
+    await expect(readSidecarHeader(sidecar)).resolves.toBe(long);
+  });
+
+  it("releases a session's in-memory registry", async () => {
+    const sessionFile = join(sessionClaimsDir(), "release.jsonl");
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await writeFile(sessionFile, "", "utf-8");
+    const ctx = { sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "release" } };
+    const anchor = await withAnchorSession(ctx, () => allocateAnchor("release.ts", "ckR"));
+    const key = sessionKeyFor(ctx)!;
+    await rm(join(sessionClaimsDir(), `${key}.registry.jsonl`), { force: true });
+    releaseRegistrySession(key);
+    expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toBeUndefined();
+  });
+
+  it("does not resurrect a released session when its load finishes", async () => {
+    const sessionFile = join(sessionClaimsDir(), "race.jsonl");
+    const ctx = { sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "race" } };
+    const key = sessionKeyFor(ctx)!;
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await writeFile(sessionFile, "", "utf-8");
+    await writeFile(sidecar, "", "utf-8");
+    const loading = withAnchorSession(ctx, () => undefined);
+    releaseRegistrySession(key);
+    await loading;
+    expect(await readFile(sidecar, "utf-8")).toBe("");
+  });
+
+  it("rebuilds a released session's ownership from its sidecar", async () => {
+    const sessionFile = join(sessionClaimsDir(), "rebuild.jsonl");
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await writeFile(sessionFile, "", "utf-8");
+    const ctx = { sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "rebuild" } };
+    const anchor = await withAnchorSession(ctx, () => allocateAnchor("rebuild.ts", "ckR"));
+    markServed("rebuild.ts", [[anchor, "ckR"]]);
+    releaseRegistrySession(sessionKeyFor(ctx)!);
+    expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toEqual({ path: "rebuild.ts", checksum: "ckR" });
+    expect(await withAnchorSession(ctx, () => servedForPath("rebuild.ts")!.get(anchor))).toBe("ckR");
   });
 
   it("scopes ownership to the calling session", async () => {

@@ -120,3 +120,24 @@ describe("hashline-config command", () => {
     });
   });
 });
+
+describe("session_shutdown lifecycle", () => {
+  it("releases the session's anchor registry", async () => {
+    await withTempDir("lifecycle-shutdown-", async (dir) => {
+      const { rm, writeFile } = await import("fs/promises");
+      const { join } = await import("path");
+      const sessionFile = join(dir, "session.jsonl");
+      await writeFile(sessionFile, "", "utf-8");
+      const { pi, handlers } = makeLifecyclePi();
+      await registerExtension(pi);
+      const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "shutdown" } };
+      await handlers.get("session_start")!({}, ctx);
+      const { allocateAnchor, ownerOf, sessionKeyFor, withAnchorSession } = await import("../../src/anchor-registry");
+      const { sessionClaimsDir } = await import("../../src/paths");
+      const anchor = await withAnchorSession(ctx, () => allocateAnchor("a.ts", "ck"));
+      await rm(join(sessionClaimsDir(), `${sessionKeyFor(ctx)!}.registry.jsonl`), { force: true });
+      await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
+      expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toBeUndefined();
+    });
+  });
+});
