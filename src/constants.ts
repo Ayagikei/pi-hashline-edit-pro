@@ -13,6 +13,9 @@ export const HASH_STORE_VERSION = 8;
 export const NEW_CONTENT_NOT_ARRAY_MSG =
   `[E_BAD_SHAPE] "replacement_lines" must be an array of strings, one per line (use [] to delete).`;
 
+export const NUL_CONTENT_MSG =
+  `[E_BAD_SHAPE] Content contains a NUL byte (U+0000); a text file cannot contain NUL, and writing it would break further reads and edits. Remove the NUL byte and retry. An empty replacement ([]) deletes a range or inserts nothing.`;
+
 export const ANCHOR_POOL_EXHAUSTED_PREFIX =
   "[E_FILE_TOO_LARGE] The session's anchor pool is exhausted";
 

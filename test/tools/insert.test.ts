@@ -5,7 +5,7 @@ import { withTempFile, makeFakePiRegistry, setupIntegrationTest, getText, extrac
 import { resolveTarget } from "../../src/fs-write";
 import { toCwd } from "../../src/paths";
 import register from "../../index";
-import { insertPreview, buildInsertToolDef } from "../../src/insert";
+import { insertPreview, buildInsertToolDef, assertInsertReq } from "../../src/insert";
 import type { RRState } from "../../src/replace-render";
 
 describe("insert tool", () => {
@@ -209,6 +209,30 @@ describe("insert tool", () => {
           undefined, undefined, ctx,
         ),
       ).rejects.toThrow(/E_BAD_SHAPE/);
+    });
+  });
+
+  it("rejects a NUL byte in lines before any file I/O", () => {
+    const nul = String.fromCharCode(0);
+    expect(() => assertInsertReq({ anchor: "Hasu", direction: "after", lines: [nul] })).toThrow(/NUL byte/);
+  });
+
+  it("rejects a NUL byte in inserted lines", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd, path }) => {
+      const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
+      const insertTool = getTool("insert");
+      const readResult = await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
+      const betaHash = extractHash(getText(readResult).split("\n").find((l) => l.includes("│beta"))!);
+      const nul = String.fromCharCode(0);
+
+      await expect(
+        insertTool.execute(
+          "i1",
+          { anchor: betaHash, direction: "after", lines: [`a${nul}b`] },
+          undefined, undefined, ctx,
+        ),
+      ).rejects.toThrow(/NUL byte/);
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\n");
     });
   });
 

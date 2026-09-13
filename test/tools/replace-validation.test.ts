@@ -48,6 +48,12 @@ describe("assertReq", () => {
     })).not.toThrow();
   });
 
+  it("throws for a NUL byte in replacement_lines", () => {
+    const nul = String.fromCharCode(0);
+    expect(() => assertReq({ remove_from: "ATIm", remove_to: "BeSR", replacement_lines: [`a${nul}b`] }))
+      .toThrow(/NUL byte/);
+  });
+
 	it("throws for request without edits", () => {
 		expect(() => assertReq({})).toThrow("[E_BAD_SHAPE]");
 	});

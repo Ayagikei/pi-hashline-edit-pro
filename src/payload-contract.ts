@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { isRec, normalizeAnchors, normalizeFilePath, rejectUnknownFields } from "./utils";
+import { isRec, normalizeAnchors, normalizeFilePath, rejectUnknownFields, assertNoNul } from "./utils";
 
 const replacementLinesSchema = Type.Array(
   Type.String({
@@ -74,6 +74,7 @@ export function assertReq(request: unknown): asserts request is ReqParams {
       '[E_BAD_SHAPE] Edit request requires "remove_from", "remove_to", and "replacement_lines" (array of strings, one per line; use [] to delete).',
     );
   }
+  assertNoNul(request.replacement_lines);
 }
 
 export function normReq(input: unknown): unknown {
@@ -136,4 +137,5 @@ export function assertInsertReq(request: unknown): asserts request is InsertReq 
   if (!Array.isArray(request.lines) || request.lines.some((line) => typeof line !== "string")) {
     throw new Error('[E_BAD_SHAPE] Insert request requires "lines" as an array of strings, one element per line.');
   }
+  assertNoNul(request.lines);
 }

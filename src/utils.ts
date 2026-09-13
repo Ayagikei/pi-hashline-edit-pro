@@ -1,3 +1,5 @@
+import { NUL_CONTENT_MSG } from "./constants";
+
 export function isRec(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -72,6 +74,10 @@ export function cntDiff(diff: string, marker: "+" | "-"): number {
 
 export function abortIf(signal?: AbortSignal): void {
   if (signal?.aborted) throw new Error("Operation aborted");
+}
+
+export function assertNoNul(lines: string[]): void {
+  if (lines.some((line) => line.includes("\0"))) throw new Error(NUL_CONTENT_MSG);
 }
 
 export function errCode(error: unknown): string | undefined {

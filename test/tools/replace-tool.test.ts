@@ -321,6 +321,52 @@ describe("regReplace", () => {
     });
   });
 
+  it("rejects a NUL byte in replacement_lines and leaves the file unchanged", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
+      const nul = String.fromCharCode(0);
+
+      await expect(tool.execute(
+        "e1",
+        {
+          remove_from: hashes[1]!, remove_to: hashes[1]!,
+          replacement_lines: [`a${nul}b`],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      )).rejects.toThrow(/NUL byte/);
+
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+    });
+  });
+
+  it("rejects a NUL byte decoded from stringified array text", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
+      const backslash = String.fromCharCode(92);
+
+      await expect(tool.execute(
+        "e1",
+        {
+          remove_from: hashes[1]!, remove_to: hashes[1]!,
+          replacement_lines: [`["${backslash}u0000"]`],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      )).rejects.toThrow(/NUL byte/);
+
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+    });
+  });
+
   it("warns instead of writing unparseable string-array text literally", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();

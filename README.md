@@ -90,6 +90,7 @@ Single line: use the same anchor for `remove_from` and `remove_to`. `replace_fro
 The request is checked before any file I/O, so a bad request never touches the file.
 
 Common copy-paste slips are fixed automatically and reported as warnings: a leftover `anchor│` prefix in `replacement_lines` or the anchor fields (a prefix of 4 to 5 characters before `│`, for example `ab12│`), diff-preview rows pasted into the replacement, a reversed range, and a boundary line pasted twice. New lines that re-include a block adjacent to the range are stripped when that block is unique in the file. The whole run is stripped as one unit, so re-including an unchanged block next to the range never duplicates it. Boundary dedup has three modes in `/hashline-config`: `on` strips with a warning, `off` applies edits literally, and `strict` rejects the edit with `[E_BOUNDARY_STRICT]` when any replacement line would be stripped.
+Content containing a NUL byte (`U+0000`) is rejected with `[E_BAD_SHAPE]` before any file I/O: writing it would make the file binary, so use an empty replacement to delete. This applies to `replace`'s `replacement_lines` and `insert`'s `lines`.
 
 Every line in the removed range must match what was last shown to you. The extension records the `anchor│content` rows it serves (`read` output, `anchor_grep` output, the auto-read block after `write`, the `+anchor│` and ` anchor│` rows of post-edit diffs, the current-range rows of `[E_RANGE_STALE]` feedback, and the context rows of stale-anchor feedback) and verifies the whole range against that record before writing. A line that changed on disk since it was shown, or an anchor that is not owned in this session, refuses the edit with `[E_RANGE_STALE]` or `[E_STALE_ANCHOR]` and returns the current range with fresh anchors, so the retry needs no `read`. An owned anchor enters the served record when its row is shown (after a restart, restored ownership counts as shown), so a file with no owned anchors cannot be edited by anchor at all; call `read` first. An owned line that was never shown — for example beyond an auto-read preview's truncation cap — is refused with `[E_RANGE_STALE]` and returns the current range, so the retry still needs no `read`.
 
@@ -217,7 +218,7 @@ Codes starting with `E_` are errors: nothing was written — except `File was wr
 
 | Code | Meaning |
 | --- | --- |
-| `[E_BAD_SHAPE]` | Request envelope or edit item has unknown, missing, or wrongly-typed fields (for example `replacement_lines` must be an array of strings, one element per line). |
+| `[E_BAD_SHAPE]` | Request envelope or edit item has unknown, missing, or wrongly-typed fields (for example `replacement_lines` must be an array of strings, one element per line), or content contains a NUL byte (`U+0000`), which would make the file binary. |
 | `[W_BAD_SHAPE]` | Auto-corrected request slip reported as a warning (for example unwrapped JSON array syntax, embedded newlines split into lines, or stringified array text that could not be parsed and was kept as one literal line). |
 | `[E_BAD_REF]` | An anchor in `remove_from`/`remove_to` is not a bare 4-char anchor. |
 | `[W_BAD_REF]` | A pasted `anchor│` or diff-preview marker was stripped from an anchor field with a warning. |
