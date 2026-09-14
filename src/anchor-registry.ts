@@ -1,5 +1,5 @@
 import { chmod, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { appendFileSync, chmodSync } from "node:fs";
+import { appendFileSync, chmodSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -163,6 +163,7 @@ export const SIDECAR_HEADER_BYTES = 64 * 1024;
 const SIDECAR_HEADER_CHUNK = 4096;
 let currentKey: string | undefined;
 const sidecarByKey = new Map<string, string>();
+const sessionFileByKey = new Map<string, string>();
 const pendingInits = new Map<string, Promise<void>>();
 const loadTokens = new Map<string, object>();
 const registries = new Map<string, SessionState>();
@@ -368,6 +369,7 @@ async function ensureRegistryForKey(key: string, sessionFile: string | undefined
       registries.set(key, newSessionState(key));
       return;
     }
+    sessionFileByKey.set(key, sessionFile);
     await loadRegistryState(key, sessionFile, token);
   })();
   pendingInits.set(key, promise);
@@ -423,12 +425,27 @@ function current(): SessionState | undefined {
   return registries.get(key);
 }
 
+function sidecarNeedsSessionRecord(sidecar: string): boolean {
+  try {
+    return statSync(sidecar).size === 0;
+  } catch {
+    return true;
+  }
+}
+
+function ensureSidecarSessionRecord(key: string, sidecar: string): void {
+  const sessionFile = sessionFileByKey.get(key);
+  if (sessionFile === undefined || !sidecarNeedsSessionRecord(sidecar)) return;
+  appendEvent({ kind: "session", sessionFile } satisfies RegistryEvent);
+}
+
 function appendEvent(event: RegistryEvent): void {
   const key = activeKey();
   if (!key) return;
   const sidecar = sidecarByKey.get(key);
   if (!sidecar) return;
   try {
+    if (event.kind !== "session") ensureSidecarSessionRecord(key, sidecar);
     appendFileSync(sidecar, JSON.stringify(event) + "\n", "utf-8");
     if (process.platform !== "win32") {
       try { chmodSync(sidecar, 0o600); } catch (error) { if (errCode(error) !== "ENOENT") console.error("Failed to secure anchor registry sidecar:", error); }
@@ -880,6 +897,7 @@ export function adoptAnchors(path: string, entries: Map<string, string>): void {
 export function resetRegistryForTests(): void {
   currentKey = undefined;
   sidecarByKey.clear();
+  sessionFileByKey.clear();
   pendingInits.clear();
   loadTokens.clear();
   registries.clear();
@@ -924,7 +942,15 @@ export function releaseRegistrySession(key: string): void {
   if (currentKey === key) currentKey = undefined;
   pendingInits.delete(key);
   sidecarByKey.delete(key);
+  sessionFileByKey.delete(key);
   registries.delete(key);
+}
+
+function isClaimedSidecar(sidecar: string): boolean {
+  for (const claimed of sidecarByKey.values()) {
+    if (claimed === sidecar) return true;
+  }
+  return false;
 }
 
 export async function gcRegistrySidecars(): Promise<void> {
@@ -948,6 +974,7 @@ export async function gcRegistrySidecars(): Promise<void> {
     }
     if (!name.endsWith(SIDECAR_SUFFIX)) continue;
     const sidecar = join(sessionClaimsDir(), name);
+    if (isClaimedSidecar(sidecar)) continue;
     try {
       const sessionFile = await readSidecarSessionFile(sidecar);
       if (sessionFile === undefined) continue;

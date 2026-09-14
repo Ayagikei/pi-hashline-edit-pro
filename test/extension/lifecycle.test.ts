@@ -93,6 +93,26 @@ describe("session_start lifecycle", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("keeps the sidecar of a session whose file does not exist yet", async () => {
+    await withTempDir("lifecycle-pending-session-", async (dir) => {
+      const { readFile, readdir } = await import("fs/promises");
+      const { join } = await import("path");
+      const sessionFile = join(dir, "session.jsonl");
+      const { pi, handlers } = makeLifecyclePi();
+      await registerExtension(pi);
+      const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "pending" } };
+      await handlers.get("session_start")!({}, ctx);
+      const { allocateAnchor, withAnchorSession } = await import("../../src/anchor-registry");
+      const { sessionClaimsDir } = await import("../../src/paths");
+      await withAnchorSession(ctx, () => allocateAnchor("a.ts", "ck"));
+      const sidecars = await readdir(sessionClaimsDir());
+      expect(sidecars).toHaveLength(1);
+      const lines = (await readFile(join(sessionClaimsDir(), sidecars[0]!), "utf-8")).split("\n");
+      expect(JSON.parse(lines[0]!).kind).toBe("session");
+      expect(JSON.parse(lines[1]!).kind).toBe("allocate");
+    });
+  });
 });
 
 describe("hashline-config command", () => {

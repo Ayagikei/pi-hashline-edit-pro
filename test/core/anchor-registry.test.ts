@@ -306,10 +306,53 @@ describe("anchor registry", () => {
     await initRegistry(sessionFile);
     const deadSession = join(sessionClaimsDir(), "dead.jsonl");
     await initRegistry(deadSession);
-    const deadSidecar = join(sessionClaimsDir(), "dead.jsonl.registry.jsonl");
+    const deadKey = createHash("sha256").update(deadSession).digest("hex").slice(0, 24);
+    const deadSidecar = join(sessionClaimsDir(), `${deadKey}.registry.jsonl`);
+    await expect(readFile(deadSidecar, "utf-8")).resolves.toContain("session");
+    resetRegistryForTests();
     await gcRegistrySidecars();
     await expect(readFile(deadSidecar, "utf-8")).rejects.toThrow();
     await expect(readFile(sessionFile, "utf-8")).resolves.toBe("");
+  });
+
+  it("keeps a loaded session's sidecar while its session file is missing", async () => {
+    const sessionFile = join(sessionClaimsDir(), "pending.jsonl");
+    const key = createHash("sha256").update(sessionFile).digest("hex").slice(0, 24);
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await initRegistry(sessionFile);
+    await gcRegistrySidecars();
+    await expect(readFile(sidecar, "utf-8")).resolves.toContain("session");
+  });
+
+  it("recreates a missing sidecar with the session header first", async () => {
+    const sessionFile = join(sessionClaimsDir(), "recreate.jsonl");
+    const key = createHash("sha256").update(sessionFile).digest("hex").slice(0, 24);
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await writeFile(sessionFile, "", "utf-8");
+    await initRegistry(sessionFile);
+    await rm(sidecar, { force: true });
+    allocateAnchor("recreated.ts", "ckR");
+    const lines = (await readFile(sidecar, "utf-8")).split("\n");
+    const first = JSON.parse(lines[0]!) as { kind?: string; sessionFile?: string };
+    const second = JSON.parse(lines[1]!) as { kind?: string };
+    expect(first.kind).toBe("session");
+    expect(first.sessionFile).toBe(sessionFile);
+    expect(second.kind).toBe("allocate");
+  });
+
+  it("recreates an empty sidecar with the session header first", async () => {
+    const sessionFile = join(sessionClaimsDir(), "recreate-empty.jsonl");
+    const key = createHash("sha256").update(sessionFile).digest("hex").slice(0, 24);
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    await writeFile(sessionFile, "", "utf-8");
+    await initRegistry(sessionFile);
+    await writeFile(sidecar, "", "utf-8");
+    allocateAnchor("recreated.ts", "ckE");
+    const first = JSON.parse((await readFile(sidecar, "utf-8")).split("\n")[0]!) as { kind?: string };
+    expect(first.kind).toBe("session");
   });
 
   it("reads a sidecar header longer than one read chunk", async () => {
