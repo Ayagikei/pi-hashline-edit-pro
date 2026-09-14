@@ -158,7 +158,7 @@ interface SessionState {
 const SIDECAR_SUFFIX = ".registry.jsonl";
 const SIDECAR_COMPACT_LINES = 5000;
 const SIDECAR_COMPACT_BYTES = 1024 * 1024;
-const SIDECAR_COMPACT_CHUNK = 5000;
+export const SIDECAR_COMPACT_LINE_BYTES = 48 * 1024;
 export const SIDECAR_HEADER_BYTES = 64 * 1024;
 const SIDECAR_HEADER_CHUNK = 4096;
 let currentKey: string | undefined;
@@ -247,6 +247,45 @@ export function shouldCompactSidecar(raw: string): boolean {
   for (let i = 0; i < raw.length; i++) if (raw.charCodeAt(i) === 10) lines += 1;
   return lines >= SIDECAR_COMPACT_LINES;
 }
+
+function parseSessionFileLine(line: string): string | undefined {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return undefined;
+  try {
+    const event = JSON.parse(trimmed) as { kind?: unknown; sessionFile?: unknown };
+    if (event.kind === "session" && typeof event.sessionFile === "string" && event.sessionFile.length > 0) return event.sessionFile;
+  } catch {
+  }
+  return undefined;
+}
+
+function firstLineSessionFile(raw: string): string | undefined {
+  const newline = raw.indexOf("\n");
+  return parseSessionFileLine(newline >= 0 ? raw.slice(0, newline) : raw);
+}
+
+function chunkBySerializedBytes<T>(items: T[], wrap: (chunk: T[]) => unknown, maxBytes: number): T[][] {
+  const chunks: T[][] = [];
+  if (items.length === 0) return chunks;
+  const overhead = Buffer.byteLength(JSON.stringify(wrap([])), "utf-8");
+  let chunk: T[] = [];
+  let bytes = overhead;
+  for (const item of items) {
+    const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf-8");
+    const nextBytes = bytes + itemBytes + (chunk.length > 0 ? 1 : 0);
+    if (chunk.length > 0 && nextBytes > maxBytes) {
+      chunks.push(chunk);
+      chunk = [item];
+      bytes = overhead + itemBytes;
+    } else {
+      chunk.push(item);
+      bytes = nextBytes;
+    }
+  }
+  chunks.push(chunk);
+  return chunks;
+}
+
 export function buildCompactedLog(sessionFile: string, state: SessionState): string {
   const byPath = new Map<string, Array<[string, string]>>();
   for (const [anchor, entry] of state.owned) {
@@ -256,18 +295,18 @@ export function buildCompactedLog(sessionFile: string, state: SessionState): str
   }
   const out: string[] = [JSON.stringify({ kind: "session", sessionFile })];
   for (const [path, rows] of byPath) {
-    for (let i = 0; i < rows.length; i += SIDECAR_COMPACT_CHUNK) {
-      out.push(JSON.stringify({ kind: "allocate", path, rows: rows.slice(i, i + SIDECAR_COMPACT_CHUNK) }));
+    for (const chunk of chunkBySerializedBytes(rows, (part) => ({ kind: "allocate", path, rows: part }), SIDECAR_COMPACT_LINE_BYTES)) {
+      out.push(JSON.stringify({ kind: "allocate", path, rows: chunk }));
     }
   }
   const freedHistory = [...state.everMinted].filter((anchor) => !state.owned.has(anchor));
-  for (let i = 0; i < freedHistory.length; i += SIDECAR_COMPACT_CHUNK) {
-    out.push(JSON.stringify({ kind: "minted", anchors: freedHistory.slice(i, i + SIDECAR_COMPACT_CHUNK) }));
+  for (const chunk of chunkBySerializedBytes(freedHistory, (part) => ({ kind: "minted", anchors: part }), SIDECAR_COMPACT_LINE_BYTES)) {
+    out.push(JSON.stringify({ kind: "minted", anchors: chunk }));
   }
   return out.join("\n") + "\n";
 }
-async function compactSidecarIfNeeded(sidecar: string, raw: string, sessionFile: string, state: SessionState): Promise<void> {
-  if (!shouldCompactSidecar(raw)) return;
+async function compactSidecarIfNeeded(sidecar: string, raw: string, sessionFile: string, state: SessionState, force = false): Promise<void> {
+  if (!force && !shouldCompactSidecar(raw)) return;
   const tmp = `${sidecar}.compact-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
     const compacted = buildCompactedLog(sessionFile, state);
@@ -300,7 +339,7 @@ async function loadRegistryState(key: string, sessionFile: string, token: object
   registries.set(key, folded);
   sidecarByKey.set(key, sidecar);
   if (rawLog.length > 0) {
-    await compactSidecarIfNeeded(sidecar, rawLog, sessionFile, folded);
+    await compactSidecarIfNeeded(sidecar, rawLog, sessionFile, folded, firstLineSessionFile(rawLog) !== sessionFile);
   }
   try {
     await mkdir(sessionClaimsDir(), { recursive: true, mode: 0o700 });
@@ -846,7 +885,7 @@ export function resetRegistryForTests(): void {
   registries.clear();
 }
 
-export async function readSidecarHeader(sidecar: string): Promise<string> {
+async function readSidecarWindow(sidecar: string): Promise<{ text: string; filled: boolean }> {
   const handle = await open(sidecar, "r");
   const buffer = Buffer.alloc(SIDECAR_HEADER_BYTES);
   try {
@@ -855,14 +894,29 @@ export async function readSidecarHeader(sidecar: string): Promise<string> {
       const { bytesRead } = await handle.read(buffer, readBytes, Math.min(SIDECAR_HEADER_CHUNK, buffer.length - readBytes), readBytes);
       if (bytesRead === 0) break;
       readBytes += bytesRead;
-      const text = buffer.subarray(0, readBytes).toString("utf-8");
-      const newline = text.indexOf("\n");
-      if (newline >= 0) return text.slice(0, newline);
     }
-    return readBytes === buffer.length ? "" : buffer.subarray(0, readBytes).toString("utf-8");
+    return { text: buffer.subarray(0, readBytes).toString("utf-8"), filled: readBytes === buffer.length };
   } finally {
     await handle.close();
   }
+}
+
+export async function readSidecarHeader(sidecar: string): Promise<string> {
+  const { text, filled } = await readSidecarWindow(sidecar);
+  const newline = text.indexOf("\n");
+  if (newline >= 0) return text.slice(0, newline);
+  return filled ? "" : text;
+}
+
+export async function readSidecarSessionFile(sidecar: string): Promise<string | undefined> {
+  const { text } = await readSidecarWindow(sidecar);
+  const lastNewline = text.lastIndexOf("\n");
+  const complete = lastNewline >= 0 ? text.slice(0, lastNewline).split("\n") : [];
+  for (const line of complete) {
+    const sessionFile = parseSessionFileLine(line);
+    if (sessionFile !== undefined) return sessionFile;
+  }
+  return parseSessionFileLine(lastNewline >= 0 ? text.slice(lastNewline + 1) : text);
 }
 
 export function releaseRegistrySession(key: string): void {
@@ -895,9 +949,9 @@ export async function gcRegistrySidecars(): Promise<void> {
     if (!name.endsWith(SIDECAR_SUFFIX)) continue;
     const sidecar = join(sessionClaimsDir(), name);
     try {
-      const header = JSON.parse(await readSidecarHeader(sidecar) || "{}") as { kind?: string; sessionFile?: string };
-      if (header.kind !== "session" || !header.sessionFile) continue;
-      await stat(header.sessionFile);
+      const sessionFile = await readSidecarSessionFile(sidecar);
+      if (sessionFile === undefined) continue;
+      await stat(sessionFile);
     } catch (error) {
       if (errCode(error) === "ENOENT") {
         await rm(sidecar, { force: true });
