@@ -293,7 +293,6 @@ export function decodeStringArray(value: unknown, warnings?: string[], label = "
 	if (candidate === undefined) return undefined;
 	const decoded = decodeArrayText(candidate);
 	if (decoded !== undefined) {
-		warnings?.push(`[W_BAD_SHAPE] Unwrapped JSON array syntax from a ${label} element.`);
 		return decoded;
 	}
 	if (looksLikeStringArray(candidate)) {

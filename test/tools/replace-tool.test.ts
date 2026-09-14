@@ -273,7 +273,7 @@ describe("regReplace", () => {
     });
   });
 
-  it("expands a stringified replacement_lines array with a warning", async () => {
+  it("expands a stringified replacement_lines array", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { pi, getTool } = makeFakePiRegistry();
       regReplace(pi);
@@ -292,7 +292,6 @@ describe("regReplace", () => {
       );
 
       expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
-      expect(result.content[0].text).toContain("Unwrapped JSON array syntax");
       expect(await readFile(path, "utf-8")).toBe("aaa\nB1\nB2\nccc\n");
     });
   });
@@ -316,7 +315,6 @@ describe("regReplace", () => {
       );
 
       expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
-      expect(result.content[0].text).toContain("Unwrapped JSON array syntax");
       expect(await readFile(path, "utf-8")).toBe("aaa\nB1\nB2\nccc\n");
     });
   });

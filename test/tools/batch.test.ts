@@ -118,7 +118,6 @@ describe("same-turn edit batches", () => {
       expect(first.content[0].text).toBe("In batch 1");
 
       const second = await editTool.execute("b2", secondArgs, undefined, undefined, ctx);
-      expect(second.content[0].text).toContain("Unwrapped JSON array syntax");
       expect(second.details.metrics.classification).toBe("applied");
       expect(await readFile(path, "utf-8")).toBe("alpha\nB1\nB2\nGAMMA\ndelta\n");
     });
@@ -979,7 +978,6 @@ describe("same-turn edit batches", () => {
 
       const second = await editTool.execute("c2", secondArgs, undefined, undefined, ctx);
       expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
-      expect(second.content[0].text).toContain("embedded newlines");
       expect(second.details.diff).toContain("BETA2");
       expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\nBETA2\nGAMMA\ndelta\n");
     });
@@ -1008,7 +1006,6 @@ describe("same-turn edit batches", () => {
 
       const second = await editTool.execute("n2", editArgs, undefined, undefined, ctx);
       expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
-      expect(second.content[0].text).toContain("embedded newlines");
       expect(await readFile(path, "utf-8")).toBe("one\nONE-A\nONE-B\nTWO\n");
     });
   });

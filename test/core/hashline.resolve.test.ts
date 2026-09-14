@@ -62,7 +62,7 @@ describe("resEdit", () => {
     expect(resolved.content_lines).toEqual(["a", "b", "c"]);
   });
 
-  it("unwraps a stringified replacement_lines array with a warning", () => {
+  it("unwraps a stringified replacement_lines array", () => {
     const warnings: string[] = [];
     const edit = {
       remove_from: "wpDM", remove_to: "wpDM",
@@ -70,7 +70,7 @@ describe("resEdit", () => {
     } as unknown as HTEdit;
     const resolved = resEdit(edit, warnings);
     expect(resolved.content_lines).toEqual(["a", "b"]);
-    expect(warnings).toEqual(["[W_BAD_SHAPE] Unwrapped JSON array syntax from a replacement_lines element."]);
+    expect(warnings).toEqual([]);
   });
 
   it("decodes single-quoted array text", () => {
@@ -81,7 +81,7 @@ describe("resEdit", () => {
     } as unknown as HTEdit;
     const resolved = resEdit(edit, warnings);
     expect(resolved.content_lines).toEqual(["a", "b"]);
-    expect(warnings).toHaveLength(1);
+    expect(warnings).toEqual([]);
   });
 
   it("warns but keeps unparseable string-array text as one literal line", () => {

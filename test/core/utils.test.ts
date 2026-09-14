@@ -391,16 +391,16 @@ describe("decodeStringArray leniency", () => {
     expect(decodeStringArray('```\n["alpha"]\n```')).toEqual(["alpha"]);
   });
 
-  it("warns when it unwraps array syntax", () => {
+  it("unwraps array syntax", () => {
     const warnings: string[] = [];
     expect(decodeStringArray(['["alpha"]'], warnings)).toEqual(["alpha"]);
-    expect(warnings).toEqual(["[W_BAD_SHAPE] Unwrapped JSON array syntax from a replacement_lines element."]);
+    expect(warnings).toEqual([]);
   });
 
   it("uses the provided label in warnings", () => {
     const warnings: string[] = [];
-    decodeStringArray("['alpha']", warnings, "lines");
-    expect(warnings[0]).toContain("from a lines element");
+    decodeStringArray('["alpha", 7]', warnings, "lines");
+    expect(warnings[0]).toContain("lines looked like a JSON array");
   });
 
   it("warns instead of silently keeping unparseable string-array text", () => {

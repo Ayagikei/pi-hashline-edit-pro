@@ -171,7 +171,7 @@ export function stripAnchorRow(
 export function resEdit(edit: HTEdit, warnings?: string[]): HEdit {
   assertItem(edit as Record<string, unknown>);
 
-  const replaceLines = parseText(decodeStringArray(edit.replacement_lines, warnings) ?? edit.replacement_lines, warnings);
+  const replaceLines = parseText(decodeStringArray(edit.replacement_lines, warnings) ?? edit.replacement_lines);
   assertNoNul(replaceLines);
   const bounds = [edit.remove_from, edit.remove_to].map((ref) => {
     return stripAnchorRow(ref.trim(), "remove_from/remove_to entry", warnings);
@@ -238,7 +238,6 @@ export function stripDiffPrefixes(
 export function swapReversedRanges(
 	edit: HEdit,
 	fileHashes: string[],
-	warnings: string[],
 ): HEdit {
 	const lineByHash = new Map<string, number>();
 	for (let i = 0; i < fileHashes.length; i++) {
@@ -254,9 +253,6 @@ export function swapReversedRanges(
 	) {
 		return edit;
 	}
-	warnings.push(
-    `[W_BAD_OP] Swapped reversed remove_from/remove_to.`
-	);
 	return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
 

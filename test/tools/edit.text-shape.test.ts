@@ -86,7 +86,7 @@ describe("edit tool text shape (token budget)", () => {
     });
   });
 
-  it("warns when a replacement_lines element carries embedded newlines", async () => {
+  it("splits a replacement_lines element with embedded newlines", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { ctx, editTool } = setupIntegrationTest(cwd);
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
@@ -101,9 +101,8 @@ describe("edit tool text shape (token budget)", () => {
         ctx,
       );
       expect(result.content[0].text).toContain("Successfully replaced");
-      expect(result.content[0].text).toContain("Warnings:");
-      expect(result.content[0].text).toMatch(/embedded newlines/);
-      expect(result.details?.metrics?.warnings).toBeGreaterThan(0);
+      expect(result.content[0].text).not.toContain("Warnings:");
+      expect(result.details?.metrics?.warnings).toBe(0);
       await expect(readFile(path, "utf-8")).resolves.toBe("aaa\nBBB\nCCC\nccc\n");
     });
   });

@@ -345,7 +345,7 @@ describe("insert tool", () => {
     });
   });
 
-  it("expands a stringified lines array with a warning", async () => {
+  it("expands a stringified lines array", async () => {
     await withTempFile("sample.ts", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
       const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
       const insertTool = getTool("insert");
@@ -358,7 +358,6 @@ describe("insert tool", () => {
         undefined, undefined, ctx,
       );
       expect(result.content[0].text).toContain("Successfully inserted in sample.ts");
-      expect(result.content[0].text).toContain("Unwrapped JSON array syntax");
       expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\nbeta1\nbeta2\ngamma\n");
     });
   });

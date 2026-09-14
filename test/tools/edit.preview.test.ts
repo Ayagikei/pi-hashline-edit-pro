@@ -363,7 +363,7 @@ describe("renderResult", () => {
       content: [
         {
           type: "text",
-          text: "Successfully replaced in sample.ts.\n\nWarnings:\n[W_BAD_OP] Swapped reversed remove_from/remove_to.",
+          text: "Successfully replaced in sample.ts.\n\nWarnings:\n[W_BARE_HASH_PREFIX] Stripped \"anchor│\" prefix from replacement_lines line 1.",
         },
       ],
       details: {
@@ -379,7 +379,7 @@ describe("renderResult", () => {
     ) as Text;
     const text = (component as any).text as string;
     expect(text).toContain("+ATIm│BBB");
-    expect(text).toContain("[W_BAD_OP] Swapped reversed remove_from/remove_to.");
+    expect(text).toContain("[W_BARE_HASH_PREFIX] Stripped \"anchor│\" prefix from replacement_lines line 1.");
   });
 
   it("returns an empty component when there is nothing to render", () => {
