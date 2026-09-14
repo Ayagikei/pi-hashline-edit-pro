@@ -22,7 +22,6 @@ import {
 import { loadHashStore, persistSnapshot, pruneMissing } from "./src/hash-store";
 import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped, sessionKeyFor, withAnchorSession, releaseRegistrySession } from "./src/anchor-registry";
 import { buildServedMap } from "./src/served";
-import { clearBoundaryBypass } from "./src/boundary-bypass";
 import { finalizeTurn, planAssistantMessage } from "./src/batch";
 import { currentEditFlags } from "./src/edit-common";
 import { HashlineConfigOverlay } from "./src/config-ui";
@@ -167,7 +166,6 @@ export default function (pi: ExtensionAPI): void {
           resolvedPath = (await resolveInCwd(writtenPath, ctx.cwd)).resolved;
           freeAnchors(resolvedPath);
           await clearUndo(resolvedPath);
-          clearBoundaryBypass(resolvedPath);
         } catch (error) {
           console.error("Failed to clear undo after write:", error);
         }

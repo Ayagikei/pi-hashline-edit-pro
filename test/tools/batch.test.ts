@@ -614,7 +614,7 @@ describe("same-turn edit batches", () => {
     });
   });
 
-  it("arms a dedup-cut noop member when the batch nets to no change", async () => {
+  it("reports a dedup-cut noop member when the batch nets to no change", async () => {
     await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupBatchTools(cwd);
       const readTool = getTool("read");
@@ -639,7 +639,7 @@ describe("same-turn edit batches", () => {
       await insertTool.execute("y2", insertArgs, undefined, undefined, ctx);
       const third = await editTool.execute("y3", thirdArgs, undefined, undefined, ctx);
       expect(third.details.metrics.classification).toBe("noop");
-      expect(third.details.warnings).toEqual(["Boundary dedup: edit #3 produced no change (1 line not added again); resend the same edit to apply it literally."]);
+      expect(third.details.warnings).toEqual(["Boundary dedup: edit #3 produced no change (1 line not added again)."]);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
 
       await (handlers.get("turn_end")!(
@@ -648,8 +648,8 @@ describe("same-turn edit batches", () => {
       ) as Promise<unknown>);
 
       const resent = await editTool.execute("y3b", thirdArgs, undefined, undefined, ctx);
-      expect(resent.content[0].text).toContain("[W_BOUNDARY_BYPASS]");
-      expect(await readFile(path, "utf-8")).toBe("a\nb\nb\nc\n");
+      expect(resent.details.metrics.classification).toBe("noop");
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });
 
@@ -905,7 +905,7 @@ describe("same-turn edit batches", () => {
     });
   });
 
-  it("marks bypasses for dedup-cut noops in an all-noop batch", async () => {
+  it("reports dedup-cut noops in an all-noop batch", async () => {
     await withTempFile("sample.txt", "x\ny\nz\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupBatchTools(cwd);
       const readTool = getTool("read");
@@ -937,7 +937,7 @@ describe("same-turn edit batches", () => {
         ctx,
       );
       expect(second.details.metrics.classification).toBe("noop");
-      expect(second.content[0].text).toContain("Boundary dedup: edits #1, #2 produced no change (2 lines not added again); resend the most recent (edit #2) to apply it literally.");
+      expect(second.content[0].text).toContain("Boundary dedup: edits #1, #2 produced no change (2 lines not added again).");
       expect(await readFile(path, "utf-8")).toBe("x\ny\nz\n");
 
       await (handlers.get("turn_end")!(
@@ -952,8 +952,8 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect((resent.content[0] as { text: string }).text).toContain("[W_BOUNDARY_BYPASS]");
-      expect(await readFile(path, "utf-8")).toBe("x\ny\nz\nz\n");
+      expect(resent.details.metrics.classification).toBe("noop");
+      expect(await readFile(path, "utf-8")).toBe("x\ny\nz\n");
     });
   });
 
@@ -1086,7 +1086,7 @@ describe("same-turn edit batches", () => {
     });
   });
 
-  it("reports a dedup-cut noop member without dedup rows and arms its resend", async () => {
+  it("reports a dedup-cut noop member without dedup rows", async () => {
     await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupBatchTools(cwd);
       const readTool = getTool("read");
@@ -1108,7 +1108,7 @@ describe("same-turn edit batches", () => {
 
       const second = await editTool.execute("z2", secondArgs, undefined, undefined, ctx);
       expect(second.details.diff).not.toContain("dedup│");
-      expect(second.details.warnings).toEqual(["Boundary dedup: edit #1 produced no change (2 lines not added again); resend the same edit to apply it literally."]);
+      expect(second.details.warnings).toEqual(["Boundary dedup: edit #1 produced no change (2 lines not added again)."]);
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nD\n");
 
       await (handlers.get("turn_end")!(
@@ -1117,8 +1117,8 @@ describe("same-turn edit batches", () => {
       ) as Promise<unknown>);
 
       const resent = await editTool.execute("z1b", firstArgs, undefined, undefined, ctx);
-      expect(resent.content[0].text).toContain("[W_BOUNDARY_BYPASS]");
-      expect(await readFile(path, "utf-8")).toBe("a\na\nb\nc\nc\nD\n");
+      expect(resent.details.metrics.classification).toBe("noop");
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nD\n");
     });
   });
 

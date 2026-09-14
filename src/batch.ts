@@ -16,7 +16,6 @@ import {
   type HEdit,
   type PlannedEdit,
 } from "./hashline";
-import { clearBoundaryBypass, markBoundaryNoop } from "./boundary-bypass";
 import { boundaryDedupNoopWarning, boundaryDedupWarning, dedupRowsFromFixes } from "./commit";
 import { adoptAnchors, markServed, servedForPath } from "./anchor-registry";
 import { restoreEndings, stripBOM, toLF, type LineEnding } from "./normalize";
@@ -67,9 +66,7 @@ export interface BatchPiece {
   dedupAbove: string[];
   dedupBelow: string[];
   noop: boolean;
-  noopPayload?: string;
   foldedLines: number;
-  bypassConsumed?: boolean;
 }
 
 export interface BatchMemberInput {
@@ -84,9 +81,7 @@ export interface BatchMemberInput {
   extraWarnings: string[];
   skipBoundaryDedup: boolean;
   strictBoundaryDedup: boolean;
-  noopPayload?: string;
   foldedLines?: number;
-  bypassConsumed?: boolean;
 }
 
 interface BatchState {
@@ -383,17 +378,13 @@ function firstFailureCause(runtime: BatchState): string | undefined {
   return sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine.slice(0, -1);
 }
 
-function batchAbortedError(runtime: BatchState, input?: BatchMemberInput): Error {
-  discardBatchState(runtime, input);
+function batchAbortedError(runtime: BatchState): Error {
+  discardBatchState(runtime);
   const cause = firstFailureCause(runtime);
   return new Error(cause ? `[E_OP_ABORTED] Batch ${runtime.display} aborted: ${cause}` : `[E_OP_ABORTED] Batch ${runtime.display} aborted.`);
 }
-function discardBatchState(runtime: BatchState, input?: BatchMemberInput): void {
+function discardBatchState(runtime: BatchState): void {
   markBatchMembersAborted(runtime);
-  for (const piece of runtime.pieces) {
-    if (piece.bypassConsumed && piece.noopPayload) markBoundaryNoop(runtime.target, piece.noopPayload);
-  }
-  if (input?.bypassConsumed && input.noopPayload) markBoundaryNoop(input.mutationTargetPath, input.noopPayload);
 }
 
 export async function ensureBatchBase(input: {
@@ -437,7 +428,7 @@ export async function ensureBatchBase(input: {
 export async function executeBatchMember(input: BatchMemberInput): Promise<TResult> {
   const runtime = batches.get(input.member.batchKey);
   if (!runtime) throw new Error(`[E_STALE_ANCHOR] Batch ${input.member.display} is no longer tracked. Call read for fresh anchors.`);
-  if (runtime.failed) throw batchAbortedError(runtime, input);
+  if (runtime.failed) throw batchAbortedError(runtime);
   let base: BatchBase;
   try {
     base = await ensureBatchBase({
@@ -449,13 +440,13 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
     });
   } catch (error) {
     noteBatchFailure(input.member, error);
-    discardBatchState(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   if (input.mutationTargetPath !== input.member.target) {
     const error = new Error(`[E_STALE_ANCHOR] "${input.hedit.hash_bounds[0].hash}" is no longer owned by ${input.member.target}. Call read for fresh anchors.`);
     noteBatchFailure(input.member, error);
-    discardBatchState(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   const displayPath = runtime.paths?.displayPath ?? input.targetPath;
@@ -475,11 +466,11 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
     else if (error instanceof Error && error.message.startsWith("[E_BOUNDARY_STRICT]")) {
       const indexed = new Error(`edit #${input.member.order} strict boundary-dedup rejection: ${error.message}`);
       noteBatchFailure(input.member, indexed);
-      discardBatchState(runtime, input);
+      discardBatchState(runtime);
       throw indexed;
     }
     noteBatchFailure(input.member, error);
-    discardBatchState(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   const start = planned.resolved.hash_bounds[0].line;
@@ -504,9 +495,7 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
     dedupAbove: dedupRows.above,
     dedupBelow: dedupRows.below,
     noop,
-    ...(input.noopPayload !== undefined ? { noopPayload: input.noopPayload } : {}),
     foldedLines: input.foldedLines ?? 0,
-    ...(input.bypassConsumed ? { bypassConsumed: true as const } : {}),
   };
   runtime.pieces.push(piece);
   if (input.kind === "replace") runtime.replaceCount += 1;
@@ -578,12 +567,6 @@ function dedupCutNoopWarning(noops: BatchPiece[]): string {
   return boundaryDedupNoopWarning(noops.map((piece) => piece.order), noops.reduce((sum, piece) => sum + piece.autoFixes, 0));
 }
 
-function armDedupCutNoops(runtime: BatchState, noops: BatchPiece[]): void {
-  for (const piece of noops) {
-    if (piece.noopPayload !== undefined) markBoundaryNoop(runtime.target, piece.noopPayload);
-  }
-}
-
 async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise<TResult> {
   const runtime = batches.get(member.batchKey);
   if (!runtime || !runtime.base || !runtime.paths) throw new Error(`[E_STALE_ANCHOR] Batch ${member.display} is no longer tracked. Call read for fresh anchors.`);
@@ -607,7 +590,6 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   const appliedPieces = runtime.pieces.filter((piece) => !piece.noop);
   if (appliedPieces.length === 0) {
     const dedupNoops = dedupCutNoops(runtime.pieces);
-    armDedupCutNoops(runtime, dedupNoops);
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
     return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
@@ -642,7 +624,6 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     throw error;
   }
   if (composed === base.content) {
-    armDedupCutNoops(runtime, dedupNoops);
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
     return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
@@ -691,8 +672,6 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     if (error instanceof Error) error.message = withAbortSuffix(error.message, runtime.display);
     throw error;
   }
-  clearBoundaryBypass(runtime.target);
-  armDedupCutNoops(runtime, dedupNoops);
   const updatedSnapshotId = await safeSnapId(paths.absolutePath, "post-edit");
   const spans = effectivePieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length, dedupAbove: piece.dedupAbove, dedupBelow: piece.dedupBelow }));
   let resultHashes: string[];

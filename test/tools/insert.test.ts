@@ -316,7 +316,7 @@ describe("insert tool", () => {
     });
   });
 
-  it("an applied insert clears a pending boundary bypass", async () => {
+  it("keeps a dedup-cut noop a noop after an unrelated insert", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
       const insertTool = getTool("insert");
@@ -341,7 +341,6 @@ describe("insert tool", () => {
 
       const resend = await editTool.execute("e2", payload, undefined, undefined, ctx);
       expect(resend.details.classification).toBe("noop");
-      expect(getText(resend)).not.toContain("[W_BOUNDARY_BYPASS]");
       expect(await readFile(path, "utf-8")).toBe("aaa\nAAA2\nbbb\nccc\n");
     });
   });

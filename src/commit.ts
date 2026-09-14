@@ -22,10 +22,7 @@ export interface CommitMeta {
   verb?: string;
   noopNoun?: string;
   prefixWarnings?: string[];
-  appliedWarnings?: string[];
   foldedAnchorLines?: number;
-  onApplied?: () => void;
-  onNoopDedup?: () => void;
 }
 
 export function boundaryDedupWarning(count: number): string {
@@ -37,10 +34,9 @@ export function boundaryDedupWarning(count: number): string {
 export function boundaryDedupNoopWarning(orders: number[], removedLines: number): string {
   const noun = removedLines === 1 ? "1 line" : `${removedLines} lines`;
   if (orders.length === 1) {
-    return `Boundary dedup: edit #${orders[0]!} produced no change (${noun} not added again); resend the same edit to apply it literally.`;
+    return `Boundary dedup: edit #${orders[0]!} produced no change (${noun} not added again).`;
   }
-  const latest = orders[orders.length - 1]!;
-  return `Boundary dedup: edits ${orders.map((order) => `#${order}`).join(", ")} produced no change (${noun} not added again); resend the most recent (edit #${latest}) to apply it literally.`;
+  return `Boundary dedup: edits ${orders.map((order) => `#${order}`).join(", ")} produced no change (${noun} not added again).`;
 }
 
 export function dedupRowsFromFixes(fixes: AutoFix[]): { removedTexts: string[]; above: string[]; below: string[] } {
@@ -57,7 +53,6 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
 
   if (pipe.result === pipe.originalNormalized) {
     const noopSnapshotId = await safeSnapId(absolutePath, "noop edit");
-    if (pipe.hadBoundaryDedup) meta.onNoopDedup?.();
     return buildNoop(
       {
         path,
@@ -76,7 +71,6 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     );
   }
 
-  warnings.push(...(meta.appliedWarnings ?? []));
   if (pipe.hadUtf8DecodeErrors) {
     warnings.push(
       "Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
@@ -126,7 +120,6 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     await undo.restore();
     throw error;
   }
-  meta.onApplied?.();
   const updatedSnapshotId = await safeSnapId(absolutePath, "post-edit");
 
   const editMeta: RMeta = {

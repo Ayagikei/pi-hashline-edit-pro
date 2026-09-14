@@ -5,12 +5,10 @@ import { mkdir, writeFile } from "fs/promises";
 import register from "../../index";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests, batchMemberFor } from "../../src/batch";
-import { writeConfig, readConfig } from "../../src/config";
 import { planEdit } from "../../src/hashline";
 import { resEdit } from "../../src/hashline";
 import { lineHashes } from "../../src/hashline";
 import { makeFakePiRegistry, withTempFile, getText } from "../support/fixtures";
-import { markBoundaryNoop, consumeBoundaryBypass, noopPayloadKey, clearBoundaryBypass } from "../../src/boundary-bypass";
 
 function toolCall(id: string, name: string, args: unknown) {
   return { type: "toolCall", id, name, arguments: args };
@@ -220,82 +218,6 @@ describe("batch hardening", () => {
     });
   });
 
-  it("aborted batch preserves consumed bypass for retry", async () => {
-    await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
-      const { getTool, handlers, ctx } = await setupTools(cwd);
-      const readTool = getTool("read");
-      const editTool = getTool("replace");
-      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const bRef = anchorFor(text, "b");
-      const cRef = anchorFor(text, "c");
-      const { resolveInCwd } = await import("../../src/fs-write");
-      const { resolved } = await resolveInCwd("sample.txt", cwd);
-      clearBoundaryBypass(resolved);
-      const payload = noopPayloadKey(resolved, bRef, bRef, ["X", "c"]);
-      markBoundaryNoop(resolved, payload);
-      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("o1", "replace", { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "c"] }),
-        toolCall("o2", "replace", { remove_from: bRef, remove_to: cRef, replacement_lines: ["OVERLAP"] }),
-      ]) }, ctx) as Promise<unknown>);
-      await editTool.execute("o1", { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "c"] }, undefined, undefined, ctx);
-      await expect(
-        editTool.execute("o2", { remove_from: bRef, remove_to: cRef, replacement_lines: ["OVERLAP"] }, undefined, undefined, ctx)
-      ).rejects.toThrow(/E_BATCH_OVERLAP|E_OP_ABORTED/);
-      expect(consumeBoundaryBypass(resolved, payload)).toBe(true);
-      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\n");
-    });
-  });
-
-  it("pending bypass overrides strict dedup for one resend", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const before = await readConfig();
-      await writeConfig({ ...before, boundaryDedupMode: "strict" });
-      try {
-        const { ctx, readTool, editTool } = await (async () => {
-          const tools = await setupTools(cwd);
-          return { ctx: tools.ctx, readTool: tools.getTool("read"), editTool: tools.getTool("replace") };
-        })();
-        const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-        const bRef = anchorFor(text, "bbb");
-        const payload = { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "ccc"] };
-        await expect(
-          editTool.execute("e1", payload, undefined, undefined, ctx)
-        ).rejects.toThrow(/E_BOUNDARY_STRICT/);
-        expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
-        const { resolveInCwd } = await import("../../src/fs-write");
-        const { resolved } = await resolveInCwd("sample.txt", cwd);
-        markBoundaryNoop(resolved, noopPayloadKey(resolved, bRef, bRef, ["X", "ccc"]));
-        const applied = await editTool.execute("e2", payload, undefined, undefined, ctx);
-        expect(getText(applied)).toMatch(/W_BOUNDARY_BYPASS/);
-        expect(await readFile(path, "utf-8")).toBe("aaa\nX\nccc\nccc\n");
-      } finally {
-        await writeConfig(before);
-      }
-    });
-  });
-  it("preserves bypass consumed by later member after earlier failure", async () => {
-    await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
-      const { getTool, handlers, ctx } = await setupTools(cwd);
-      const readTool = getTool("read");
-      const editTool = getTool("replace");
-      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const bRef = anchorFor(text, "b");
-      const cRef = anchorFor(text, "c");
-      const { resolveInCwd } = await import("../../src/fs-write");
-      const { resolved } = await resolveInCwd("sample.txt", cwd);
-      clearBoundaryBypass(resolved);
-      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("m1", "replace", { remove_from: bRef, remove_to: "ZZZZ", replacement_lines: ["MIXED"] }),
-        toolCall("m2", "replace", { remove_from: cRef, remove_to: cRef, replacement_lines: ["Y"] }),
-      ]) }, ctx) as Promise<unknown>);
-      const payload2 = noopPayloadKey(resolved, cRef, cRef, ["Y"]);
-      markBoundaryNoop(resolved, payload2);
-      await expect(editTool.execute("m1", { remove_from: bRef, remove_to: "ZZZZ", replacement_lines: ["MIXED"] }, undefined, undefined, ctx)).rejects.toThrow();
-      await expect(editTool.execute("m2", { remove_from: cRef, remove_to: cRef, replacement_lines: ["Y"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
-      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\n");
-      expect(consumeBoundaryBypass(resolved, payload2)).toBe(true);
-    });
-  });
   it("an unresolvable sibling does not abort the valid sibling batch", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);

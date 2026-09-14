@@ -11,7 +11,6 @@ import { withAnchorSession } from "./anchor-registry";
 import { loadP, loadGuide } from "./prompts";
 import { assertInsertReq, normReq, type InsertReq } from "./payload-contract";
 import { decodeStringArray, isRec, splitLines } from "./utils";
-import { clearBoundaryBypass } from "./boundary-bypass";
 import { queuedEdit, editToolBase, editRenderCallWrapper, editRenderResultWrapper, resolveEditTargetWithRequirement, throwIfStrictInput, withInsertPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import type { RPreview, RRState } from "./replace-render";
 export { assertInsertReq, type InsertReq };
@@ -251,7 +250,6 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
             noopNoun: "Insertion",
             foldedAnchorLines: anchorLine === undefined ? 0 : 1,
             prefixWarnings: [...anchorWarnings, ...insertWarnings],
-            onApplied: () => clearBoundaryBypass(mutationTargetPath),
           });
         });
       });
