@@ -17,7 +17,7 @@ import {
   type PlannedEdit,
 } from "./hashline";
 import { clearBoundaryBypass, markBoundaryNoop } from "./boundary-bypass";
-import { boundaryDedupWarning, dedupRowsFromFixes } from "./commit";
+import { boundaryDedupNoopWarning, boundaryDedupWarning, dedupRowsFromFixes } from "./commit";
 import { adoptAnchors, markServed, servedForPath } from "./anchor-registry";
 import { restoreEndings, stripBOM, toLF, type LineEnding } from "./normalize";
 import { assertInsertReq, assertReq, normReq } from "./payload-contract";
@@ -570,6 +570,20 @@ function mergeInsertPairs(pieces: BatchPiece[]): BatchPiece[] {
   return merged;
 }
 
+function dedupCutNoops(pieces: BatchPiece[]): BatchPiece[] {
+  return pieces.filter((piece) => piece.noop && piece.autoFixes > 0).sort((a, b) => a.order - b.order);
+}
+
+function dedupCutNoopWarning(noops: BatchPiece[]): string {
+  return boundaryDedupNoopWarning(noops.map((piece) => piece.order), noops.reduce((sum, piece) => sum + piece.autoFixes, 0));
+}
+
+function armDedupCutNoops(runtime: BatchState, noops: BatchPiece[]): void {
+  for (const piece of noops) {
+    if (piece.noopPayload !== undefined) markBoundaryNoop(runtime.target, piece.noopPayload);
+  }
+}
+
 async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise<TResult> {
   const runtime = batches.get(member.batchKey);
   if (!runtime || !runtime.base || !runtime.paths) throw new Error(`[E_STALE_ANCHOR] Batch ${member.display} is no longer tracked. Call read for fresh anchors.`);
@@ -592,11 +606,10 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   }
   const appliedPieces = runtime.pieces.filter((piece) => !piece.noop);
   if (appliedPieces.length === 0) {
-    for (const piece of runtime.pieces) {
-      if (piece.autoFixes > 0 && piece.noopPayload !== undefined) markBoundaryNoop(runtime.target, piece.noopPayload);
-    }
+    const dedupNoops = dedupCutNoops(runtime.pieces);
+    armDedupCutNoops(runtime, dedupNoops);
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
-    return combinedNoop(paths.displayPath, member, runtime, snapshotId);
+    return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
   const effectivePieces = mergeInsertPairs(appliedPieces);
   const ordered = [...effectivePieces].sort((a, b) => a.start - b.start);
@@ -611,8 +624,10 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   const composed = composeBatchLines(base.content, effectivePieces);
   const warnings = [...runtime.warnings];
   if (base.hadUtf8DecodeErrors) warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
-  const dedupTotal = runtime.pieces.reduce((sum, piece) => sum + piece.autoFixes, 0);
+  const dedupTotal = effectivePieces.reduce((sum, piece) => sum + piece.autoFixes, 0);
   if (dedupTotal > 0) warnings.push(boundaryDedupWarning(dedupTotal));
+  const dedupNoops = dedupCutNoops(runtime.pieces);
+  if (dedupNoops.length > 0) warnings.push(dedupCutNoopWarning(dedupNoops));
   try {
     await throwIfStrictInput(dedupeWarnings(warnings));
     assertNotEmpty(base.content, composed);
@@ -627,8 +642,9 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     throw error;
   }
   if (composed === base.content) {
+    armDedupCutNoops(runtime, dedupNoops);
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
-    return combinedNoop(paths.displayPath, member, runtime, snapshotId);
+    return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
   abortIf(signal);
   let currentRaw: string;
@@ -676,6 +692,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     throw error;
   }
   clearBoundaryBypass(runtime.target);
+  armDedupCutNoops(runtime, dedupNoops);
   const updatedSnapshotId = await safeSnapId(paths.absolutePath, "post-edit");
   const spans = effectivePieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length, dedupAbove: piece.dedupAbove, dedupBelow: piece.dedupBelow }));
   let resultHashes: string[];
@@ -737,8 +754,10 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   return changed;
 }
 
-async function combinedNoop(path: string, member: PlannedMember, runtime: BatchState, snapshotId: string | undefined): Promise<TResult> {
+async function combinedNoop(path: string, member: PlannedMember, runtime: BatchState, snapshotId: string | undefined, dedupNoops: BatchPiece[]): Promise<TResult> {
   const executed = runtime.applied + runtime.noops;
+  const warnings = [...runtime.warnings];
+  if (dedupNoops.length > 0) warnings.push(dedupCutNoopWarning(dedupNoops));
   const noop = buildNoop(
     {
       path,
@@ -750,7 +769,7 @@ async function combinedNoop(path: string, member: PlannedMember, runtime: BatchS
         addedLines: 0,
         removedLines: 0,
       },
-      warnings: dedupeWarnings(runtime.warnings),
+      warnings: dedupeWarnings(warnings),
       boundaryRemovedLines: 0,
     },
     "Batch",

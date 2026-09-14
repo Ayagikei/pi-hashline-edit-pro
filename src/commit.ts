@@ -34,6 +34,15 @@ export function boundaryDedupWarning(count: number): string {
   return `Boundary dedup: ${noun} not added again (see ${DEDUP_ANCHOR}${HASH_SEP} ${row}).`;
 }
 
+export function boundaryDedupNoopWarning(orders: number[], removedLines: number): string {
+  const noun = removedLines === 1 ? "1 line" : `${removedLines} lines`;
+  if (orders.length === 1) {
+    return `Boundary dedup: edit #${orders[0]!} produced no change (${noun} not added again); resend the same edit to apply it literally.`;
+  }
+  const latest = orders[orders.length - 1]!;
+  return `Boundary dedup: edits ${orders.map((order) => `#${order}`).join(", ")} produced no change (${noun} not added again); resend the most recent (edit #${latest}) to apply it literally.`;
+}
+
 export function dedupRowsFromFixes(fixes: AutoFix[]): { removedTexts: string[]; above: string[]; below: string[] } {
   const sorted = [...fixes].sort((a, b) => a.removedLineIndex - b.removedLineIndex);
   const above = sorted.filter((fix) => fix.kind === "leading" || fix.kind === "last-new-before").map((fix) => fix.removedLine);
