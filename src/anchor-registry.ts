@@ -158,7 +158,7 @@ const SIDECAR_SUFFIX = ".registry.jsonl";
 const SIDECAR_COMPACT_LINES = 5000;
 const SIDECAR_COMPACT_BYTES = 1024 * 1024;
 const SIDECAR_COMPACT_CHUNK = 5000;
-const SIDECAR_HEADER_BYTES = 64 * 1024;
+export const SIDECAR_HEADER_BYTES = 64 * 1024;
 const SIDECAR_HEADER_CHUNK = 4096;
 let currentKey: string | undefined;
 const sidecarByKey = new Map<string, string>();
@@ -848,7 +848,7 @@ export async function readSidecarHeader(sidecar: string): Promise<string> {
       const newline = text.indexOf("\n");
       if (newline >= 0) return text.slice(0, newline);
     }
-    return buffer.subarray(0, readBytes).toString("utf-8");
+    return readBytes === buffer.length ? "" : buffer.subarray(0, readBytes).toString("utf-8");
   } finally {
     await handle.close();
   }

@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdir, readFile, readdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import {
@@ -16,6 +16,7 @@ import {
   alignOwnership,
   alignOwnershipWithSpans,
   readSidecarHeader,
+  SIDECAR_HEADER_BYTES,
   parseRegistryLog,
   foldRegistryEvents,
   mintAnchor,
@@ -36,8 +37,19 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   resetRegistryForTests();
 });
+
+function oversizedAllocateLine(): string {
+  const row = JSON.stringify(["abcd", "0123456789abcdef"]);
+  const rowCount = Math.ceil((SIDECAR_HEADER_BYTES + 1024) / (Buffer.byteLength(row, "utf-8") + 1));
+  return JSON.stringify({
+    kind: "allocate",
+    path: "/example.txt",
+    rows: Array.from({ length: rowCount }, () => ["abcd", "0123456789abcdef"]),
+  });
+}
 
 describe("anchor registry", () => {
   it("allocates unique well-formed anchors within a session", () => {
@@ -307,6 +319,36 @@ describe("anchor registry", () => {
     await expect(readSidecarHeader(sidecar)).resolves.toBe(normal);
     await writeFile(sidecar, `${long}\n`, "utf-8");
     await expect(readSidecarHeader(sidecar)).resolves.toBe(long);
+  });
+
+  it("reads a short sidecar header without a trailing newline", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "no-newline-header.registry.jsonl");
+    const header = JSON.stringify({ kind: "session", sessionFile: join(sessionClaimsDir(), "no-newline-live.jsonl") });
+    await writeFile(sidecar, header, "utf-8");
+    await expect(readSidecarHeader(sidecar)).resolves.toBe(header);
+  });
+
+  it("returns an empty header when the first line exceeds the read cap", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "oversized-header.registry.jsonl");
+    const oversized = oversizedAllocateLine();
+    expect(Buffer.byteLength(oversized)).toBeGreaterThan(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${oversized}\n`, "utf-8");
+    await expect(readSidecarHeader(sidecar)).resolves.toBe("");
+  });
+
+  it("keeps a sidecar with an unreadable oversized header when gc runs", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "oversized-gc.registry.jsonl");
+    await writeFile(sidecar, `${oversizedAllocateLine()}\n`, "utf-8");
+    const errors: unknown[][] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errors.push(args);
+    });
+    await gcRegistrySidecars();
+    expect(errors.some((args) => args.some((arg) => arg instanceof SyntaxError))).toBe(false);
+    await expect(readFile(sidecar, "utf-8")).resolves.toContain("allocate");
   });
 
   it("releases a session's in-memory registry", async () => {
