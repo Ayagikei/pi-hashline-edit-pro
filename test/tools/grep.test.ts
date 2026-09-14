@@ -69,6 +69,54 @@ describe("grep tool", () => {
     });
   });
 
+  it("serves anchors for a line changed since the last read so a replace edits immediately", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
+      const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
+      await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
+      await writeFile(path, "alpha\nBETA-EXTERNAL\ngamma\n", "utf-8");
+
+      const grepTool = getTool("anchor_grep");
+      const result = await grepTool.execute(
+        "g1",
+        { pattern: "BETA-EXTERNAL", path: "sample.ts" },
+        undefined, undefined, ctx,
+      );
+      const betaHash = extractHash(getText(result).split("\n").find((l) => l.includes("│BETA-EXTERNAL"))!);
+
+      const edit = await getTool("replace").execute(
+        "e1",
+        { remove_from: betaHash, remove_to: betaHash, replacement_lines: ["BETA"] },
+        undefined, undefined, ctx,
+      );
+      expect(edit.content[0]!.text).toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
+    });
+  });
+
+  it("serves anchors for a line appended since the last read so a replace edits immediately", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd, path }) => {
+      const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
+      await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
+      await writeFile(path, "alpha\nbeta\ngamma\n", "utf-8");
+
+      const grepTool = getTool("anchor_grep");
+      const result = await grepTool.execute(
+        "g1",
+        { pattern: "gamma", path: "sample.ts" },
+        undefined, undefined, ctx,
+      );
+      const gammaHash = extractHash(getText(result).split("\n").find((l) => l.includes("│gamma"))!);
+
+      const edit = await getTool("replace").execute(
+        "e1",
+        { remove_from: gammaHash, remove_to: gammaHash, replacement_lines: ["GAMMA"] },
+        undefined, undefined, ctx,
+      );
+      expect(edit.content[0]!.text).toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\nGAMMA\n");
+    });
+  });
+
   it("does not persist hash snapshots while searching", async () => {
     await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd }) => {
       const { ctx, getTool } = setupIntegrationTest(cwd);

@@ -152,6 +152,7 @@ interface SessionState {
 	served: Map<string, Map<string, string>>;
 	everMinted: AnchorMintedSet;
 	probe: number;
+	allocatedChecksum: Map<string, string>;
 }
 
 const SIDECAR_SUFFIX = ".registry.jsonl";
@@ -174,7 +175,7 @@ function newSessionState(seed?: string): SessionState {
 			probe = (probe * 256 + byte) % ANCHOR_COUNT;
 		}
 	}
-	return { owned: new Map(), served: new Map(), everMinted: new Set(), probe };
+	return { owned: new Map(), served: new Map(), everMinted: new Set(), probe, allocatedChecksum: new Map() };
 }
 
 function seedServedFromOwned(state: SessionState): void {
@@ -476,6 +477,7 @@ export function clearRegistry(): void {
 	if (!state) return;
 	state.owned.clear();
 	state.served.clear();
+	state.allocatedChecksum.clear();
 	appendEvent({ kind: "clear" });
 }
 
@@ -532,6 +534,7 @@ export function shadowStateFrom(state: SessionState): SessionState {
 		served: new Map(),
 		everMinted: new ShadowMintedSet(state.everMinted),
 		probe: state.probe,
+		allocatedChecksum: state.allocatedChecksum,
 	};
 }
 
@@ -743,6 +746,11 @@ export function alignOwnership(
   return { anchors, freed: freed.map((f) => f.anchor), minted: minted.map((m) => m.anchor) };
 }
 
+function snapshotMatchesAllocation(state: SessionState | undefined, path: string, checksum: string): boolean {
+  const allocated = state?.allocatedChecksum.get(path);
+  return allocated === undefined || allocated === checksum;
+}
+
 export async function allocateFileAnchors(
   store: HashStore,
   path: string,
@@ -754,12 +762,14 @@ export async function allocateFileAnchors(
   },
 ): Promise<string[]> {
   ensureRegistry();
+  const registry = current();
   const shadow = options?.shadow === true;
   const lines = splitLines(content);
   const checksums = lines.map((line) => contentChecksum(hashSource(line)));
   if (options?.previous?.spans) {
     const prevChecksums = splitLines(options.previous.content).map((line) => contentChecksum(hashSource(line)));
     const aligned = alignOwnershipWithSpans(path, options.previous.hashes, prevChecksums, checksums, options.previous.spans, { shadow });
+    if (!shadow && registry) registry.allocatedChecksum.set(path, contentChecksum(content));
     if (!shadow && options.persist !== false) {
       persistSnapshot(store, path, content, aligned.anchors, checksums);
     }
@@ -772,7 +782,7 @@ export async function allocateFileAnchors(
     prevChecksums = splitLines(options.previous.content).map((line) => contentChecksum(hashSource(line)));
   } else {
     const previousState = getAllocatedState(store, path, !shadow);
-    if (previousState) {
+    if (previousState && snapshotMatchesAllocation(registry, path, previousState.contentChecksum)) {
       prevAnchors = previousState.anchors;
       prevChecksums = previousState.checksums;
       if (!prevChecksums && previousState.contentChecksum === contentChecksum(content)) {
@@ -800,6 +810,7 @@ export async function allocateFileAnchors(
         }
         return { anchors, freed: [], minted: anchors };
       })();
+  if (!shadow && registry) registry.allocatedChecksum.set(path, contentChecksum(content));
   if (!shadow && options?.persist !== false) {
     persistSnapshot(store, path, content, aligned.anchors, checksums);
   }
