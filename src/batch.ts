@@ -84,6 +84,12 @@ export interface BatchMemberInput {
   foldedLines?: number;
 }
 
+interface BatchFailure {
+  kind: BatchKind;
+  order: number;
+  code?: string;
+}
+
 interface BatchState {
   display: number;
   target: string;
@@ -99,6 +105,7 @@ interface BatchState {
   failures: number;
   failed: boolean;
   firstError?: unknown;
+  failure?: BatchFailure;
   warnings: string[];
 }
 
@@ -117,13 +124,14 @@ const MAX_TRACKED_BATCHES = 256;
 const plan = new Map<string, PlannedMember>();
 const batches = new Map<number, BatchState>();
 let nextBatchKey = 1;
-const abortedMembers = new Map<string, number>();
+const abortedMembers = new Map<string, { display: number; message: string }>();
 const ABORTED_MEMBERS_LIMIT = 1024;
 
 function markBatchMembersAborted(runtime: BatchState): void {
+  const message = abortedBatchMessage(runtime);
   for (const id of runtime.memberIds) {
     abortedMembers.delete(id);
-    abortedMembers.set(id, runtime.display);
+    abortedMembers.set(id, { display: runtime.display, message });
   }
   while (abortedMembers.size > ABORTED_MEMBERS_LIMIT) {
     const oldest = abortedMembers.keys().next().value;
@@ -132,13 +140,13 @@ function markBatchMembersAborted(runtime: BatchState): void {
   }
 }
 
-export function abortedBatchDisplayFor(toolCallId: string): number | undefined {
+export function abortedBatchMessageFor(toolCallId: string): string | undefined {
   const marked = abortedMembers.get(toolCallId);
-  if (marked !== undefined) return marked;
+  if (marked !== undefined) return marked.message;
   const member = plan.get(toolCallId);
   if (!member) return undefined;
   const runtime = batches.get(member.batchKey);
-  return runtime?.failed ? runtime.display : undefined;
+  return runtime?.failed ? abortedBatchMessage(runtime) : undefined;
 }
 
 export function batchMemberFor(toolCallId: string): PlannedMember | undefined {
@@ -354,16 +362,27 @@ export function withAbortSuffix(message: string, display: number): string {
   if (message.includes(suffix)) return message;
   return message.endsWith(".") ? `${message} ${suffix}` : `${message}. ${suffix}`;
 }
+
+const ERROR_CODE_RE = /\[(E_[A-Z0-9_]+)\]/;
+
+function errorCodeOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = ERROR_CODE_RE.exec(error.message)?.[1];
+  return code === "E_OP_ABORTED" ? undefined : code;
+}
+
 export function noteBatchFailure(member: PlannedMember, error: unknown): void {
   const runtime = batches.get(member.batchKey);
   if (!runtime) return;
-  markBatchMembersAborted(runtime);
   if (error instanceof Error && !error.message.startsWith("[E_OP_ABORTED]")) error.message = withAbortSuffix(error.message, member.display);
   runtime.failures += 1;
   if (!runtime.failed) {
     runtime.failed = true;
     runtime.firstError = error;
+    const code = errorCodeOf(error);
+    runtime.failure = { kind: member.kind, order: member.order, ...(code !== undefined ? { code } : {}) };
   }
+  markBatchMembersAborted(runtime);
 }
 
 function firstFailureCause(runtime: BatchState): string | undefined {
@@ -378,10 +397,18 @@ function firstFailureCause(runtime: BatchState): string | undefined {
   return sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine.slice(0, -1);
 }
 
+function abortedBatchMessage(runtime: BatchState): string {
+  const failure = runtime.failure;
+  if (failure?.code !== undefined) {
+    return `[E_OP_ABORTED] Batch ${runtime.display} aborted: [${failure.kind}] Call Nr ${failure.order} errored [${failure.code}]`;
+  }
+  const cause = firstFailureCause(runtime);
+  return cause ? `[E_OP_ABORTED] Batch ${runtime.display} aborted: ${cause}` : `[E_OP_ABORTED] Batch ${runtime.display} aborted.`;
+}
+
 function batchAbortedError(runtime: BatchState): Error {
   discardBatchState(runtime);
-  const cause = firstFailureCause(runtime);
-  return new Error(cause ? `[E_OP_ABORTED] Batch ${runtime.display} aborted: ${cause}` : `[E_OP_ABORTED] Batch ${runtime.display} aborted.`);
+  return new Error(abortedBatchMessage(runtime));
 }
 function discardBatchState(runtime: BatchState): void {
   markBatchMembersAborted(runtime);
@@ -583,7 +610,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
       if (planned.kind === "replace") assertReq(normalized);
       else assertInsertReq(normalized);
     } catch (error) {
-      noteBatchFailure(member, error);
+      noteBatchFailure(planned, error);
       throw batchAbortedError(runtime);
     }
   }

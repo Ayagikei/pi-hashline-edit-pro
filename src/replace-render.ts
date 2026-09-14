@@ -1,7 +1,7 @@
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { keyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import type { ReplaceDetails } from "./replace";
-import { abortedBatchDisplayFor } from "./batch";
+import { abortedBatchMessageFor } from "./batch";
 import { withLineNumbers } from "./utils";
 import { isDedupRow } from "./replace-response";
 import { getPreviewInput } from "./payload-contract";
@@ -355,9 +355,9 @@ export function renderEditResult(
 	}
 	const batch = result.details?.batch;
 	if (batch && batch.last === false) {
-		const abortedDisplay = typeof context?.toolCallId === "string" ? abortedBatchDisplayFor(context.toolCallId) : undefined;
-		if (abortedDisplay !== undefined) {
-			return reuseText(context, `\n${theme.fg("error", `[E_OP_ABORTED] Batch ${abortedDisplay} aborted.`)}`);
+		const abortedMessage = typeof context?.toolCallId === "string" ? abortedBatchMessageFor(context.toolCallId) : undefined;
+		if (abortedMessage !== undefined) {
+			return reuseText(context, `\n${theme.fg("error", abortedMessage)}`);
 		}
 		return reuseText(context, theme.fg("warning", `In batch ${batch.id}`));
 	}

@@ -1013,7 +1013,7 @@ describe("same-turn edit batches", () => {
     });
   });
 
-  it("aborts a batch when a planned member never executed and names the cause", async () => {
+  it("names the planned member that never executed and its error code", async () => {
     await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupBatchTools(cwd);
       const readTool = getTool("read");
@@ -1042,9 +1042,47 @@ describe("same-turn edit batches", () => {
       } catch (error) {
         failure = error instanceof Error ? error.message : String(error);
       }
-      expect(failure).toContain("[E_OP_ABORTED] Batch 1 aborted:");
-      expect(failure).toContain('[E_BAD_SHAPE] Insert request "direction" must be "before" or "after".');
+      expect(failure).toBe("[E_OP_ABORTED] Batch 1 aborted: [insert] Call Nr 2 errored [E_BAD_SHAPE]");
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+
+  it("aborts siblings with the failing call and code when a member's anchors went stale", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const betaRef = anchorFor(text, "beta");
+      const gammaRef = anchorFor(text, "gamma");
+
+      await writeFile(path, "alpha\nBETA\ngamma\n", "utf-8");
+
+      const firstArgs = { remove_from: betaRef, remove_to: betaRef, replacement_lines: ["B"] };
+      const secondArgs = { remove_from: gammaRef, remove_to: gammaRef, replacement_lines: ["G"] };
+      const message = assistantMessage([
+        toolCall("g1", "replace", firstArgs),
+        toolCall("g2", "replace", secondArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      let firstFailure = "";
+      try {
+        await editTool.execute("g1", firstArgs, undefined, undefined, ctx);
+      } catch (error) {
+        firstFailure = error instanceof Error ? error.message : String(error);
+      }
+      expect(firstFailure).toMatch(/^\[E_STALE_ANCHOR\]/);
+      expect(firstFailure).toContain("Aborts batch 1.");
+
+      let secondFailure = "";
+      try {
+        await editTool.execute("g2", secondArgs, undefined, undefined, ctx);
+      } catch (error) {
+        secondFailure = error instanceof Error ? error.message : String(error);
+      }
+      expect(secondFailure).toBe("[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 1 errored [E_STALE_ANCHOR]");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
     });
   });
 
@@ -1167,7 +1205,7 @@ describe("same-turn edit batches", () => {
     });
   });
 
-  it("trims a multi-line cause to its first complete sentence", async () => {
+  it("names the failing call and its error code in the abort message", async () => {
     await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupBatchTools(cwd);
       const readTool = getTool("read");
@@ -1200,9 +1238,7 @@ describe("same-turn edit batches", () => {
       } catch (error) {
         secondFailure = error instanceof Error ? error.message : String(error);
       }
-      expect(secondFailure).toContain(
-        "[E_OP_ABORTED] Batch 1 aborted: [E_RANGE_STALE] Line 2 of the replaced range (lines 1-3) in sample.txt does not match what was shown.",
-      );
+      expect(secondFailure).toBe("[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 1 errored [E_RANGE_STALE]");
       expect(secondFailure).not.toContain("Current range with fresh anchors");
       expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
 
