@@ -613,8 +613,8 @@ describe("undo_last_change", () => {
       expect(undoResult.isError).toBe(true);
       expect(getText(undoResult)).toMatch(/E_UNDO_STALE/);
       expect(getText(undoResult)).toMatch(/modified after the edit/i);
-      expect(getText(undoResult)).toMatch(/do not modify the file/i);
-      expect(getText(undoResult)).toMatch(/do not revert your own edit/i);
+      expect(getText(undoResult)).toMatch(/do not edit the file to force the undo/i);
+      expect(getText(undoResult)).not.toMatch(/most likely the correct state|external change/i);
 
       const content = await readFile(join(cwd, "sample.ts"), "utf-8");
       expect(content).toBe("aaa\nEXTERNAL\nccc\n");

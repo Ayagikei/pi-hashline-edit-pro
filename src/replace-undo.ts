@@ -172,7 +172,7 @@ export function regUndo(pi: ExtensionAPI): void {
               content: [
                 {
                   type: "text",
-                  text: `[E_UNDO_STALE] Cannot undo last change on ${path}: the file was modified after the edit, so nothing was reverted. The current content already contains your applied edit plus that external change and is most likely the correct state. Do not modify the file to make an undo possible and do not revert your own edit. The undo record is kept. Call read() to verify the current state, then stop.`
+                  text: `[E_UNDO_STALE] Cannot undo last change on ${path}: the file was modified after the edit, so nothing was reverted and the file was left untouched. The undo record is kept. Do not edit the file to force the undo. Call read() to inspect the current state.`
                 },
               ],
               isError: true,
