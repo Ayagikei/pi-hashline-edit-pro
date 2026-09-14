@@ -307,7 +307,7 @@ describe("batch hardening", () => {
         toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
         toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
+      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
       await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
@@ -324,8 +324,25 @@ describe("batch hardening", () => {
         toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
       ]) }, ctx) as Promise<unknown>);
       await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
+      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+    });
+  });
+  it("names a coded cause when a sibling request cannot be parsed", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
+      const aaaRef = anchorFor(text, "aaa");
+      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
+        toolCall("p1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
+        toolCall("p2", "replace", { replacement_lines: ["BBB"] }),
+      ]) }, ctx) as Promise<unknown>);
+      await expect(
+        editTool.execute("p1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx)
+      ).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_BAD_SHAPE] A sibling edit request in this batch could not be parsed.");
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\n");
     });
   });
   it("aborted batch preserves prior undo", async () => {
@@ -344,7 +361,7 @@ describe("batch hardening", () => {
         toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
         toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
+      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
       await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
       expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\n");
       await undoTool.execute("u1", { path: "sample.txt" }, undefined, undefined, ctx);

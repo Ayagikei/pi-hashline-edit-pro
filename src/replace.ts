@@ -34,7 +34,7 @@ import { resolveTarget } from "./fs-write";
 import { toCwd } from "./paths";
 import { noopPayloadKey, markBoundaryNoop, consumeBoundaryBypass, clearBoundaryBypass } from "./boundary-bypass";
 import { queuedEdit, editToolBase, editRenderCallWrapper, editRenderResultWrapper, resolveEditTargetWithRequirement, throwIfStrictInput, getBoundaryDedupMode, withReplacePrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
-import { commitEdit } from "./commit";
+import { commitEdit, dedupRowsFromFixes } from "./commit";
 import { batchMemberFor, executeBatchMember, noteBatchFailure, suffixPoisonCause } from "./batch";
 
 export { editToolSchema, type ReqParams, assertReq };
@@ -180,9 +180,7 @@ export async function execPipeline(
     edit, originalHashes, isNoop, anchorResult.autoFixes?.length ?? 0,
   );
 
-  const sortedFixes = [...(anchorResult.autoFixes ?? [])].sort((a, b) => a.removedLineIndex - b.removedLineIndex);
-  const aboveFixes = sortedFixes.filter((fix) => fix.kind === "leading" || fix.kind === "last-new-before");
-  const belowFixes = sortedFixes.filter((fix) => fix.kind === "trailing" || fix.kind === "first-new-after");
+  const sortedFixes = dedupRowsFromFixes(anchorResult.autoFixes ?? []);
   const pipeSpan = isNoop ? undefined : hashSpan(originalHashes, edit.hash_bounds[0].hash, edit.hash_bounds[1].hash);
   const pipeResultCount = splitLines(result).length;
   const pipeSpans = pipeSpan ? [{ start: pipeSpan[0], end: pipeSpan[1], replacementCount: pipeResultCount - (originalHashes.length - (pipeSpan[1] - pipeSpan[0] + 1)) }] : undefined;
@@ -203,9 +201,9 @@ export async function execPipeline(
     totalRemovedLines,
     hadBoundaryDedup: (anchorResult.autoFixes?.length ?? 0) > 0,
     boundaryRemovedLines: anchorResult.autoFixes?.length ?? 0,
-    boundaryRemovedLineTexts: sortedFixes.map((fix) => fix.removedLine),
-    boundaryDedupAbove: aboveFixes.map((fix) => fix.removedLine),
-    boundaryDedupBelow: belowFixes.map((fix) => fix.removedLine),
+    boundaryRemovedLineTexts: sortedFixes.removedTexts,
+    boundaryDedupAbove: sortedFixes.above,
+    boundaryDedupBelow: sortedFixes.below,
     identity,
     ...(pipeSpans ? { spans: pipeSpans } : {}),
   };

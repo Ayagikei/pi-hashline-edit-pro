@@ -125,7 +125,7 @@ describe("strict boundary dedup", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
       const failure = await captureFailure(() =>
         editTool.execute(
           "f2",

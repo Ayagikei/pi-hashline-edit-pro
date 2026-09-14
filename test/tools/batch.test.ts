@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
+import { Value } from "typebox/value";
 import register from "../../index";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
@@ -16,6 +17,12 @@ function assistantMessage(calls: Array<{ type: string; id: string; name: string;
 
 function anchorFor(readText: string, needle: string): string {
   return readText.split("\n").find((line) => line.includes(`│${needle}`))!.split("│")[0]!;
+}
+
+function withHostCoercion(schema: unknown, args: Record<string, unknown>): Record<string, unknown> {
+  const coerced = structuredClone(args);
+  Value.Convert(schema as never, coerced);
+  return coerced;
 }
 
 async function setupBatchTools(cwd: string) {
@@ -54,7 +61,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       const second = await editTool.execute(
         "b2",
@@ -70,8 +77,8 @@ describe("same-turn edit batches", () => {
       expect(second.details.metrics.edits_attempted).toBe(2);
       expect(second.details.metrics.classification).toBe("applied");
       expect(second.details.batch).toMatchObject({ id: 1, size: 2, last: true });
-      expect(second.details.diff.startsWith("batch:\n")).toBe(true);
-      expect(combined.startsWith("batch:\n")).toBe(true);
+      expect(second.details.diff.startsWith("batch 1:\n")).toBe(true);
+      expect(combined.startsWith("batch 1:\n")).toBe(true);
 
       expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\nGAMMA\ndelta\n");
 
@@ -108,7 +115,7 @@ describe("same-turn edit batches", () => {
       await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
 
       const first = await editTool.execute("b1", firstArgs, undefined, undefined, ctx);
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       const second = await editTool.execute("b2", secondArgs, undefined, undefined, ctx);
       expect(second.content[0].text).toContain("Unwrapped JSON array syntax");
@@ -142,7 +149,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       const second = await insertTool.execute(
         "m2",
@@ -155,8 +162,8 @@ describe("same-turn edit batches", () => {
       expect(combined).toContain("Batch 1: 2 edits applied as one commit");
       expect(second.details.diff).toContain("ONE");
       expect(second.details.diff).toContain("TWO-AND-A-HALF");
-      expect(second.details.diff.startsWith("batch:\n")).toBe(true);
-      expect(combined.startsWith("batch:\n")).toBe(true);
+      expect(second.details.diff.startsWith("batch 1:\n")).toBe(true);
+      expect(combined.startsWith("batch 1:\n")).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("ONE\ntwo\nTWO-AND-A-HALF\nthree\n");
 
       await (handlers.get("turn_end")!(
@@ -267,7 +274,7 @@ describe("same-turn edit batches", () => {
           toolName: "replace",
           toolCallId: "b1",
           input: {},
-          content: [{ type: "text", text: "In batch" }],
+          content: [{ type: "text", text: "In batch 1" }],
           details: { diff: "", metrics: { classification: "applied" }, batch: { id: 1, size: 2, last: false } },
           isError: false,
         },
@@ -301,7 +308,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       const second = await insertTool.execute(
         "i2",
@@ -313,7 +320,7 @@ describe("same-turn edit batches", () => {
       expect(second.content[0].text).toContain("Successfully inserted in sample.txt");
       expect(second.details.diff).toContain("ONE-A");
       expect(second.details.diff).toContain("TWO-A");
-      expect(second.details.diff.startsWith("batch:\n")).toBe(true);
+      expect(second.details.diff.startsWith("batch 1:\n")).toBe(true);
       expect(await readFile(path, "utf-8")).toBe("one\nONE-A\ntwo\nTWO-A\n");
 
       await (handlers.get("turn_end")!(
@@ -352,7 +359,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       const second = await editTool.execute(
         "n2",
@@ -400,7 +407,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       let failure = "";
       try {
@@ -530,6 +537,7 @@ describe("same-turn edit batches", () => {
         secondFailure = error instanceof Error ? error.message : String(error);
       }
       expect(secondFailure).toContain("[E_OP_ABORTED]");
+      expect(secondFailure).toContain("[E_BAD_SHAPE]");
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
 
       await (handlers.get("turn_end")!(
@@ -563,7 +571,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       await writeFile(path, "a\nb\nEXTERNAL\n", "utf-8");
 
@@ -619,7 +627,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       let failure = "";
       try {
@@ -667,7 +675,7 @@ describe("same-turn edit batches", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
 
       let failure = "";
       try {
@@ -785,6 +793,226 @@ describe("same-turn edit batches", () => {
       );
       expect((resent.content[0] as { text: string }).text).toContain("[W_BOUNDARY_BYPASS]");
       expect(await readFile(path, "utf-8")).toBe("x\ny\nz\nz\n");
+    });
+  });
+
+  it("applies a batch whose member sent replacement_lines as a string after host coercion", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const betaRef = anchorFor(text, "beta");
+      const gammaRef = anchorFor(text, "gamma");
+
+      const firstArgs = { remove_from: betaRef, remove_to: betaRef, replacement_lines: "BETA\nBETA2" };
+      const secondArgs = { remove_from: gammaRef, remove_to: gammaRef, replacement_lines: ["GAMMA"] };
+      const message = assistantMessage([
+        toolCall("c1", "replace", firstArgs),
+        toolCall("c2", "replace", secondArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await editTool.execute("c1", withHostCoercion(editTool.parameters, firstArgs), undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      const second = await editTool.execute("c2", secondArgs, undefined, undefined, ctx);
+      expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
+      expect(second.content[0].text).toContain("embedded newlines");
+      expect(second.details.diff).toContain("BETA2");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\nBETA2\nGAMMA\ndelta\n");
+    });
+  });
+
+  it("applies a batch whose insert member sent lines as a string after host coercion", async () => {
+    await withTempFile("sample.txt", "one\ntwo\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const insertTool = getTool("insert");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const oneRef = anchorFor(text, "one");
+      const twoRef = anchorFor(text, "two");
+
+      const insertArgs = { anchor: oneRef, direction: "after", lines: "ONE-A\nONE-B" };
+      const editArgs = { remove_from: twoRef, remove_to: twoRef, replacement_lines: ["TWO"] };
+      const message = assistantMessage([
+        toolCall("n1", "insert", insertArgs),
+        toolCall("n2", "replace", editArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await insertTool.execute("n1", withHostCoercion(insertTool.parameters, insertArgs), undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      const second = await editTool.execute("n2", editArgs, undefined, undefined, ctx);
+      expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
+      expect(second.content[0].text).toContain("embedded newlines");
+      expect(await readFile(path, "utf-8")).toBe("one\nONE-A\nONE-B\nTWO\n");
+    });
+  });
+
+  it("aborts a batch when a planned member never executed and names the cause", async () => {
+    await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const aRef = anchorFor(text, "a");
+      const bRef = anchorFor(text, "b");
+      const cRef = anchorFor(text, "c");
+
+      const firstArgs = { remove_from: aRef, remove_to: aRef, replacement_lines: ["A"] };
+      const skippedArgs = { anchor: bRef, direction: "sideways", lines: ["B2"] };
+      const lastArgs = { remove_from: cRef, remove_to: cRef, replacement_lines: ["C"] };
+      const message = assistantMessage([
+        toolCall("x1", "replace", firstArgs),
+        toolCall("x2", "insert", skippedArgs),
+        toolCall("x3", "replace", lastArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await editTool.execute("x1", firstArgs, undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      let failure = "";
+      try {
+        await editTool.execute("x3", lastArgs, undefined, undefined, ctx);
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      expect(failure).toContain("[E_OP_ABORTED] Batch 1 aborted:");
+      expect(failure).toContain('[E_BAD_SHAPE] Insert request "direction" must be "before" or "after".');
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+
+  it("shows the dedup rows the batch warning references", async () => {
+    await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const bRef = anchorFor(text, "b");
+      const cRef = anchorFor(text, "c");
+
+      const firstArgs = { remove_from: bRef, remove_to: bRef, replacement_lines: ["a", "B"] };
+      const secondArgs = { remove_from: cRef, remove_to: cRef, replacement_lines: ["X", "d"] };
+      const message = assistantMessage([
+        toolCall("w1", "replace", firstArgs),
+        toolCall("w2", "replace", secondArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await editTool.execute("w1", firstArgs, undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      const second = await editTool.execute("w2", secondArgs, undefined, undefined, ctx);
+      expect(second.content[0].text).toContain("Boundary dedup: 2 lines not added again (see dedup│ rows).");
+      const rows = second.details.diff.split("\n");
+      const aboveIdx = rows.findIndex((row: string) => row.startsWith("dedup│a"));
+      const bIdx = rows.findIndex((row: string) => row.startsWith("-") && row.endsWith("│b"));
+      const xIdx = rows.findIndex((row: string) => row.startsWith("+") && row.endsWith("│X"));
+      const belowIdx = rows.findIndex((row: string) => row.startsWith("dedup│d"));
+      expect(aboveIdx).toBe(bIdx - 1);
+      expect(belowIdx).toBe(xIdx + 1);
+      expect(await readFile(path, "utf-8")).toBe("a\nB\nX\nd\n");
+
+      await (handlers.get("turn_end")!(
+        { type: "turn_end", turnIndex: 0, message, toolResults: [{ toolCallId: "w1" }, { toolCallId: "w2" }] },
+        ctx,
+      ) as Promise<unknown>);
+    });
+  });
+
+  it("renders an aborted batch member as aborted on re-render", async () => {
+    await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const bRef = anchorFor(text, "b");
+
+      const firstArgs = { remove_from: bRef, remove_to: bRef, replacement_lines: ["B"] };
+      const secondArgs = { remove_from: bRef, remove_to: bRef, replacement_lines: ["B2"] };
+      const message = assistantMessage([
+        toolCall("v1a", "replace", firstArgs),
+        toolCall("v1b", "replace", secondArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await editTool.execute("v1a", firstArgs, undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      const theme = { fg: (_name: string, row: string) => row, bold: (row: string) => row };
+      const context = { toolCallId: "v1a", lastComponent: undefined, state: {}, expanded: false, isError: false };
+      const pending = (editTool.renderResult!(first, { isPartial: false }, theme, context) as any);
+      expect(pending.text).toBe("In batch 1");
+
+      let failure = "";
+      try {
+        await editTool.execute("v1b", secondArgs, undefined, undefined, ctx);
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      expect(failure).toContain("[E_BATCH_OVERLAP]");
+
+      const aborted = (editTool.renderResult!(first, { isPartial: false }, theme, context) as any);
+      expect(aborted.text).toContain("[E_OP_ABORTED] Batch 1 aborted.");
+
+      await (handlers.get("turn_end")!(
+        { type: "turn_end", turnIndex: 0, message, toolResults: [{ toolCallId: "v1a" }, { toolCallId: "v1b" }] },
+        ctx,
+      ) as Promise<unknown>);
+      const later = (editTool.renderResult!(first, { isPartial: false }, theme, context) as any);
+      expect(later.text).toContain("[E_OP_ABORTED] Batch 1 aborted.");
+      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
+    });
+  });
+
+  it("trims a multi-line cause to its first complete sentence", async () => {
+    await withTempFile("sample.txt", "a\nb\nc\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const aRef = anchorFor(text, "a");
+      const cRef = anchorFor(text, "c");
+
+      await writeFile(path, "a\nB\nc\n", "utf-8");
+
+      const firstArgs = { remove_from: aRef, remove_to: cRef, replacement_lines: ["X"] };
+      const lastArgs = { remove_from: cRef, remove_to: cRef, replacement_lines: ["C"] };
+      const message = assistantMessage([
+        toolCall("s1", "replace", firstArgs),
+        toolCall("s2", "replace", lastArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      let firstFailure = "";
+      try {
+        await editTool.execute("s1", firstArgs, undefined, undefined, ctx);
+      } catch (error) {
+        firstFailure = error instanceof Error ? error.message : String(error);
+      }
+      expect(firstFailure).toContain("Current range with fresh anchors");
+
+      let secondFailure = "";
+      try {
+        await editTool.execute("s2", lastArgs, undefined, undefined, ctx);
+      } catch (error) {
+        secondFailure = error instanceof Error ? error.message : String(error);
+      }
+      expect(secondFailure).toContain(
+        "[E_OP_ABORTED] Batch 1 aborted: [E_RANGE_STALE] Line 2 of the replaced range (lines 1-3) in sample.txt does not match what was shown.",
+      );
+      expect(secondFailure).not.toContain("Current range with fresh anchors");
+      expect(await readFile(path, "utf-8")).toBe("a\nB\nc\n");
+
+      await (handlers.get("turn_end")!(
+        { type: "turn_end", turnIndex: 0, message, toolResults: [{ toolCallId: "s1" }, { toolCallId: "s2" }] },
+        ctx,
+      ) as Promise<unknown>);
     });
   });
 });

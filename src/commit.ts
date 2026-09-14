@@ -9,7 +9,7 @@ import { getDiffContextLines } from "./config";
 import { safeSnapId } from "./file-reader";
 import { writeAtomic } from "./fs-write";
 import { servedHashesFromDiff, buildServedMap } from "./served";
-import { lineHashes } from "./hashline";
+import { lineHashes, type AutoFix } from "./hashline";
 import { hashSpan } from "./replace";
 import { restoreEndings, stripBOM, toLF } from "./normalize";
 import { markServed as markServedScoped } from "./anchor-registry";
@@ -32,6 +32,13 @@ export function boundaryDedupWarning(count: number): string {
   const noun = count === 1 ? "1 line" : `${count} lines`;
   const row = count === 1 ? "row" : "rows";
   return `Boundary dedup: ${noun} not added again (see ${DEDUP_ANCHOR}${HASH_SEP} ${row}).`;
+}
+
+export function dedupRowsFromFixes(fixes: AutoFix[]): { removedTexts: string[]; above: string[]; below: string[] } {
+  const sorted = [...fixes].sort((a, b) => a.removedLineIndex - b.removedLineIndex);
+  const above = sorted.filter((fix) => fix.kind === "leading" || fix.kind === "last-new-before").map((fix) => fix.removedLine);
+  const below = sorted.filter((fix) => fix.kind === "trailing" || fix.kind === "first-new-after").map((fix) => fix.removedLine);
+  return { removedTexts: sorted.map((fix) => fix.removedLine), above, below };
 }
 
 export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promise<TResult> {
