@@ -296,39 +296,64 @@ describe("batch hardening", () => {
       expect(consumeBoundaryBypass(resolved, payload2)).toBe(true);
     });
   });
-  it("unresolved same-turn stale aborts single-file batch valid first", async () => {
+  it("an unresolvable sibling does not abort the valid sibling batch", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);
       const readTool = getTool("read");
       const editTool = getTool("replace");
       const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const valid = anchorFor(text, "aaa");
+      const aaaRef = anchorFor(text, "aaa");
+      const bbbRef = anchorFor(text, "bbb");
+      const cccRef = anchorFor(text, "ccc");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
+        toolCall("v1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
         toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
+        toolCall("v2", "replace", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }),
+        toolCall("v3", "replace", { remove_from: cccRef, remove_to: cccRef, replacement_lines: ["CCC"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
-      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+      expect(batchMemberFor("s1")).toBeUndefined();
+      expect(batchMemberFor("v1")?.display).toBe(1);
+      expect(batchMemberFor("v3")?.last).toBe(true);
+      const first = getText(await editTool.execute("v1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx));
+      expect(first).toBe("In batch 1");
+      await expect(
+        editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_STALE_ANCHOR\]/);
+      await editTool.execute("v2", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }, undefined, undefined, ctx);
+      const last = await editTool.execute("v3", { remove_from: cccRef, remove_to: cccRef, replacement_lines: ["CCC"] }, undefined, undefined, ctx);
+      expect(getText(last)).toContain("Batch 1: 3 edits applied as one commit");
+      expect(await readFile(path, "utf-8")).toBe("AAA\nBBB\nCCC\n");
     });
   });
-  it("unresolved same-turn stale aborts single-file batch stale first", async () => {
+  it("an unresolvable sibling executed first does not poison the later batch", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);
       const readTool = getTool("read");
       const editTool = getTool("replace");
       const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const valid = anchorFor(text, "aaa");
+      const aaaRef = anchorFor(text, "aaa");
+      const bbbRef = anchorFor(text, "bbb");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
         toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
-        toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
+        toolCall("v1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
+        toolCall("v2", "replace", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
-      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+      let failure = "";
+      try {
+        await editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx);
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
+      }
+      expect(failure).toMatch(/^\[E_STALE_ANCHOR\]/);
+      expect(failure).not.toContain("Aborts batch");
+      const first = getText(await editTool.execute("v1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx));
+      expect(first).toBe("In batch 1");
+      const last = await editTool.execute("v2", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }, undefined, undefined, ctx);
+      expect(getText(last)).toContain("Batch 1: 2 edits applied as one commit");
+      expect(await readFile(path, "utf-8")).toBe("AAA\nBBB\nccc\n");
     });
   });
-  it("names a coded cause when a sibling request cannot be parsed", async () => {
+  it("an unparsable sibling fails solo instead of aborting the batch", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);
       const readTool = getTool("read");
@@ -339,10 +364,13 @@ describe("batch hardening", () => {
         toolCall("p1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
         toolCall("p2", "replace", { replacement_lines: ["BBB"] }),
       ]) }, ctx) as Promise<unknown>);
+      expect(batchMemberFor("p1")).toBeUndefined();
+      expect(batchMemberFor("p2")).toBeUndefined();
+      await editTool.execute("p1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx);
       await expect(
-        editTool.execute("p1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx)
-      ).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_BAD_SHAPE] A sibling edit request in this batch could not be parsed.");
-      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\n");
+        editTool.execute("p2", { replacement_lines: ["BBB"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+      expect(await readFile(path, "utf-8")).toBe("AAA\nbbb\n");
     });
   });
   it("aborted batch preserves prior undo", async () => {
@@ -358,11 +386,15 @@ describe("batch hardening", () => {
       const second = getText(await readTool.execute("r2", { path: "sample.txt" }, undefined, undefined, ctx));
       const valid = anchorFor(second, "aaa");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
+        toolCall("s1", "replace", { remove_from: valid, remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
         toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
-        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow("[E_OP_ABORTED] Batch 1 aborted: [E_STALE_ANCHOR] \"ZZZZ\" is not owned in this session.");
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
+      await expect(
+        editTool.execute("s1", { remove_from: valid, remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/Aborts batch 1\.$/);
+      await expect(
+        editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_OP_ABORTED\]/);
       expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\n");
       await undoTool.execute("u1", { path: "sample.txt" }, undefined, undefined, ctx);
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");

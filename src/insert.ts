@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { constants } from "node:fs";
 import { execPipeline, type ReqParams, type ReplaceDetails, previewFromPipe, previewError } from "./replace";
 import { commitEdit } from "./commit";
-import { batchMemberFor, ensureBatchBase, executeBatchMember, noteBatchFailure, suffixPoisonCause } from "./batch";
+import { batchMemberFor, ensureBatchBase, executeBatchMember, noteBatchFailure } from "./batch";
 import { readNormFile, type NormFile } from "./file-reader";
 import { MAX_HASH_LINES, parseHashRef, resEdit, resolveAnchorLine, type Anchor, type HEdit } from "./hashline";
 import { stripAnchorRow } from "./hashline/resolve";
@@ -189,7 +189,6 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
         }).catch((error: unknown) => {
           const member = batchMemberFor(_toolCallId);
           if (member) noteBatchFailure(member, error);
-          else suffixPoisonCause(_toolCallId, error);
           throw error;
         });
         let ref: Anchor;
@@ -218,6 +217,7 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
             }
             return executeBatchMember({
               kind: "insert",
+              direction: req.direction,
               member,
               targetPath,
               mutationTargetPath,
