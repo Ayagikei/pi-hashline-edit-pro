@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -24,6 +24,7 @@ export interface UndoEntry {
   originalEnding: LineEnding;
   hashes: string[];
   resultContent: string;
+  mode?: number;
 }
 
 export async function saveUndo(
@@ -34,12 +35,18 @@ export async function saveUndo(
   try {
     const store = await loadHashStore();
     previous = getUndoEntry(store, path);
+    let mode: number | undefined;
+    try {
+      mode = (await stat(path)).mode & 0o7777;
+    } catch {
+    }
     upsertUndo(store, path, {
       content: entry.content,
       bom: entry.bom,
       ending: entry.originalEnding,
       hashes: entry.hashes,
       resultContent: entry.resultContent,
+      ...(mode !== undefined ? { mode } : {}),
     });
   } catch (error) {
     console.error("Failed to persist undo entry:", error);
@@ -75,6 +82,7 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       originalEnding,
       hashes: record.hashes,
       resultContent: record.resultContent,
+      ...(record.mode !== undefined ? { mode: record.mode } : {}),
     };
   } catch (error) {
     console.error("Failed to load undo entry:", error);
@@ -89,6 +97,10 @@ export async function clearUndo(path: string): Promise<void> {
   } catch (error) {
     console.error("Failed to clear undo entry:", error);
   }
+}
+
+function fallbackFileMode(): number {
+  return 0o666 & ~process.umask();
 }
 
 export function regUndo(pi: ExtensionAPI): void {
@@ -172,6 +184,7 @@ export function regUndo(pi: ExtensionAPI): void {
             mutationTargetPath,
             undo.bom + restoreEndings(undo.content, undo.originalEnding),
             currentIdentity,
+            undo.mode ?? fallbackFileMode(),
           );
 
           const currentNormalized = currentRaw === undefined ? "" : toLF(stripBOM(currentRaw).text);

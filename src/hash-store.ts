@@ -26,7 +26,7 @@ export { isValidHashList, isValidServedMap, parseHashList, parseServedMap, parse
 export { SNAPSHOT_CACHE_LIMIT };
 export const STORE_NOT_OPEN_MESSAGE = "Hash store is not open; transactional update aborted";
 
-type SqlParams = (string | number)[];
+type SqlParams = (string | number | null)[];
 
 interface RawStatement {
   get(...params: SqlParams): unknown;
@@ -140,6 +140,7 @@ export interface UndoRecord {
   ending: string;
   hashes: string[];
   resultContent: string;
+  mode?: number;
 }
 
 let cachedDb: { path: string; db: RawDb; stmts: Prepared } | null = null;
@@ -190,6 +191,9 @@ function buildStore(db: RawDb): { db: RawDb; stmts: Prepared } {
   try {
     db.exec("ALTER TABLE snapshots ADD COLUMN line_checksums TEXT");
   } catch {}
+  try {
+    db.exec("ALTER TABLE undo ADD COLUMN mode INTEGER");
+  } catch {}
   const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'version'").get() as { value?: string } | undefined;
   if (versionRow && versionRow.value !== String(HASH_STORE_VERSION)) {
     db.exec("DELETE FROM snapshots");
@@ -209,11 +213,11 @@ function buildStore(db: RawDb): { db: RawDb; stmts: Prepared } {
     "ON CONFLICT(path) DO UPDATE SET checksum = excluded.checksum, line_count = excluded.line_count, hashes = excluded.hashes, line_checksums = excluded.line_checksums, updated_at = excluded.updated_at"
   );
   const undoUpsertStmt = db.prepare(
-    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
-    "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, updated_at = excluded.updated_at"
+    "INSERT INTO undo (path, content, bom, ending, hashes, result_content, mode, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(path) DO UPDATE SET content = excluded.content, bom = excluded.bom, ending = excluded.ending, hashes = excluded.hashes, result_content = excluded.result_content, mode = excluded.mode, updated_at = excluded.updated_at"
   );
   const undoGetStmt = db.prepare(
-    "SELECT content, bom, ending, hashes, result_content FROM undo WHERE path = ?"
+    "SELECT content, bom, ending, hashes, result_content, mode FROM undo WHERE path = ?"
   );
   const undoDelStmt = db.prepare("DELETE FROM undo WHERE path = ?");
   const snapshotTimeStmt = db.prepare("SELECT updated_at FROM snapshots WHERE path = ?");
@@ -533,6 +537,7 @@ export function upsertUndo(store: HashStore, path: string, entry: UndoRecord): v
     entry.ending,
     JSON.stringify(entry.hashes),
     entry.resultContent,
+    typeof entry.mode === "number" ? entry.mode : null,
     Date.now(),
   );
   touchSession(path);
@@ -549,6 +554,7 @@ export function getUndoEntry(store: HashStore, path: string): UndoRecord | undef
     ending: row.ending as string,
     hashes: parsed,
     resultContent: row.result_content as string,
+    ...(typeof row.mode === "number" ? { mode: row.mode } : {}),
   };
 }
 

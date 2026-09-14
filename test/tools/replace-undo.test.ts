@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { readFile, writeFile, rm } from "fs/promises";
+import { chmod, readFile, stat, writeFile, rm } from "fs/promises";
 import { join } from "path";
-import { loadHashStore, getSnapshot, shutdownHashStore } from "../../src/hash-store";
+import { loadHashStore, getSnapshot, shutdownHashStore, upsertUndo } from "../../src/hash-store";
+import { lineHashes } from "../../src/hashline";
 import * as hashStoreModule from "../../src/hash-store";
 import * as fsWriteModule from "../../src/fs-write";
 import * as replaceUndoModule from "../../src/replace-undo";
@@ -712,6 +713,81 @@ describe("undo_last_change", () => {
       const second = await undo.execute("u2", { path: "sample.ts" }, undefined, undefined, ctx);
       expect(second.isError).toBe(true);
       expect(getText(second)).toMatch(/no undo history/i);
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("restores a deleted file with its previous mode", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { getTool, ctx } = setupIntegrationTest(cwd);
+      const editTool = getTool("replace");
+      const undo = getTool("undo_last_change");
+      const hashes = await servedAnchors(getTool, ctx, "sample.ts");
+
+      await chmod(path, 0o640);
+      await editTool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["BBB"] },
+        undefined, undefined, ctx,
+      );
+
+      await rm(path);
+
+      const undoResult = await undo.execute("u1", { path: "sample.ts" }, undefined, undefined, ctx);
+      expect(undoResult.isError).toBeFalsy();
+      expect(getText(undoResult)).toMatch(/deleted; restored/i);
+
+      const stats = await stat(path);
+      expect(stats.mode & 0o777).toBe(0o640);
+    });
+  });
+
+  it.skipIf(process.platform === "win32")("keeps the current file mode when undoing an existing file", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { getTool, ctx } = setupIntegrationTest(cwd);
+      const editTool = getTool("replace");
+      const undo = getTool("undo_last_change");
+      const hashes = await servedAnchors(getTool, ctx, "sample.ts");
+
+      await editTool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: ["BBB"] },
+        undefined, undefined, ctx,
+      );
+
+      await chmod(path, 0o604);
+      const undoResult = await undo.execute("u1", { path: "sample.ts" }, undefined, undefined, ctx);
+      expect(undoResult.isError).toBeFalsy();
+
+      const stats = await stat(path);
+      expect(stats.mode & 0o777).toBe(0o604);
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+    });
+  });
+
+  it("falls back to the default file mode when a legacy record restores a deleted file", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { getTool, ctx } = setupIntegrationTest(cwd);
+      const undo = getTool("undo_last_change");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
+      const store = await loadHashStore();
+      upsertUndo(store, path, {
+        content: "aaa\nbbb\nccc\n",
+        bom: "",
+        ending: "\n",
+        hashes,
+        resultContent: "aaa\nBBB\nccc\n",
+      });
+      shutdownHashStore();
+
+      await rm(path);
+
+      const undoResult = await undo.execute("u1", { path: "sample.ts" }, undefined, undefined, ctx);
+      expect(undoResult.isError).toBeFalsy();
+      expect(getText(undoResult)).toMatch(/deleted; restored/i);
+
+      const stats = await stat(path);
+      expect(stats.mode & 0o777).toBe(0o666 & ~process.umask());
+      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
     });
   });
 
