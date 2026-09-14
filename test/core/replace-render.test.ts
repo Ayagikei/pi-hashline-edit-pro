@@ -3,6 +3,7 @@ import {
 	getPreviewInput,
 	toNumberedDiff,
 	colorLines,
+	highlightBatchRefs,
 	fmtPreview,
 	fmtResult,
 	fmtCall,
@@ -131,6 +132,22 @@ describe("fmtResult", () => {
 		expect(result).toContain("[success]");
 		expect(result).toContain("[error]");
 		expect(result).toContain("[dim]");
+	});
+});
+
+describe("highlightBatchRefs", () => {
+	it("colors batch references yellow and the rest red", () => {
+		const result = highlightBatchRefs("[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]", mockTheme);
+		expect(result).toBe("[error][E_OP_ABORTED] [warning]Batch 1[error] aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]");
+	});
+
+	it("colors a lowercase trailing batch reference", () => {
+		const result = highlightBatchRefs("edit one file per call. Aborts batch 12.", mockTheme);
+		expect(result).toBe("[error]edit one file per call. Aborts [warning]batch 12[error].");
+	});
+
+	it("colors text without batch references entirely red", () => {
+		expect(highlightBatchRefs("boom", mockTheme)).toBe("[error]boom");
 	});
 });
 

@@ -311,6 +311,20 @@ describe("renderResult", () => {
     expect((component as any).text).toBe("\nboom");
   });
 
+  it("highlights batch references in error text", () => {
+    const tool = buildToolDef();
+    const markTheme = { ...theme, fg: (name: string, text: string) => `<${name}>${text}</>` } as any;
+    const component = tool.renderResult!(
+      { content: [{ type: "text", text: "[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]" }], details: { diff: "" } },
+      { expanded: false, isPartial: false },
+      markTheme,
+      makeContext({ isError: true }),
+    ) as Text;
+    const text = (component as any).text as string;
+    expect(text).toContain("<warning>Batch 1</>");
+    expect(text).toContain("<error>[E_OP_ABORTED] ");
+  });
+
   it("returns an empty component for an error without text", () => {
     const tool = buildToolDef();
     const component = tool.renderResult!(

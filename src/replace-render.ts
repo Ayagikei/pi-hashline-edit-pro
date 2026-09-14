@@ -67,6 +67,21 @@ export function fmtResult(diff: string, theme: FgT): string {
 	return colorLines(diff.split("\n"), theme).join("\n");
 }
 
+export function highlightBatchRefs(text: string, theme: FgT): string {
+	const pattern = /\b([Bb]atch \d+)\b/g;
+	const sections: string[] = [];
+	let cursor = 0;
+	for (;;) {
+		const match = pattern.exec(text);
+		if (!match) break;
+		if (match.index > cursor) sections.push(theme.fg("error", text.slice(cursor, match.index)));
+		sections.push(theme.fg("warning", match[0]));
+		cursor = match.index + match[0].length;
+	}
+	if (cursor < text.length) sections.push(theme.fg("error", text.slice(cursor)));
+	return sections.join("");
+}
+
 export function fmtCall(
   args: { path?: string; remove_from?: string; remove_to?: string; anchor?: string } | undefined,
   state: RRState,
@@ -357,13 +372,13 @@ export function renderEditResult(
 	if (batch && batch.last === false) {
 		const abortedMessage = typeof context?.toolCallId === "string" ? abortedBatchMessageFor(context.toolCallId) : undefined;
 		if (abortedMessage !== undefined) {
-			return reuseText(context, `\n${theme.fg("error", abortedMessage)}`);
+			return reuseText(context, `\n${highlightBatchRefs(abortedMessage, theme)}`);
 		}
 		return reuseText(context, theme.fg("warning", `In batch ${batch.id}`));
 	}
 	if (context.isError) {
 		return renderedText
-			? reuseText(context, `\n${theme.fg("error", renderedText)}`)
+			? reuseText(context, `\n${highlightBatchRefs(renderedText, theme)}`)
 			: new Text("", 0, 0);
 	}
 	if (isApplied(result.details)) {
