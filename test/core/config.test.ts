@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "fs/promises";
 import { join } from "path";
 import {
   toggleAutoRead,
+  toggleAutoReadAll,
   toggleAnchorGrep,
   toggleRequirePath,
   toggleStrictInput,
@@ -85,6 +86,29 @@ describe("config - toggleAnchorGrep", () => {
       const config = await readConfig();
       expect(config.autoRead).toBe(false);
       expect(config.anchorGrepEnabled).toBe(false);
+    });
+  });
+});
+
+describe("config - toggleAutoReadAll", () => {
+  it("defaults to off", async () => {
+    await withTempHome(async () => {
+      expect((await readConfig()).autoReadAll).toBe(false);
+    });
+  });
+
+  it("toggles from default false to true", async () => {
+    await withTempHome(async () => {
+      expect(await toggleAutoReadAll()).toBe(true);
+      expect((await readConfig()).autoReadAll).toBe(true);
+    });
+  });
+
+  it("toggles from true back to false", async () => {
+    await withTempHome(async () => {
+      await writeConfig({ autoRead: true, anchorGrepEnabled: true, autoReadAll: true });
+      expect(await toggleAutoReadAll()).toBe(false);
+      expect((await readConfig()).autoReadAll).toBe(false);
     });
   });
 });

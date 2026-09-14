@@ -12,6 +12,7 @@ export const MAX_DIFF_CONTEXT_LINES = 10;
 export interface Config {
   autoRead: boolean;
   anchorGrepEnabled: boolean;
+  autoReadAll?: boolean;
   requirePath?: boolean;
   strictInput?: boolean;
   boundaryDedupMode?: BoundaryDedupMode;
@@ -21,6 +22,7 @@ export interface Config {
 const DEFAULT_CONFIG: Config = {
   autoRead: true,
   anchorGrepEnabled: true,
+  autoReadAll: false,
   requirePath: false,
   strictInput: false,
   boundaryDedupMode: "on",
@@ -51,6 +53,7 @@ function parseConfig(content: string): Config {
   }
   const autoRead = parsed.autoRead;
   const anchorGrepEnabled = isRec(parsed) ? parsed.anchorGrepEnabled : undefined;
+  const autoReadAll = isRec(parsed) ? parsed.autoReadAll : undefined;
   const requirePath = isRec(parsed) ? parsed.requirePath : undefined;
   const strictInput = isRec(parsed) ? parsed.strictInput : undefined;
   const boundaryDedupMode = isRec(parsed) ? parsed.boundaryDedupMode : undefined;
@@ -59,6 +62,7 @@ function parseConfig(content: string): Config {
   return {
     autoRead: typeof autoRead === "boolean" ? autoRead : DEFAULT_CONFIG.autoRead,
     anchorGrepEnabled: typeof anchorGrepEnabled === "boolean" ? anchorGrepEnabled : DEFAULT_CONFIG.anchorGrepEnabled,
+    autoReadAll: typeof autoReadAll === "boolean" ? autoReadAll : DEFAULT_CONFIG.autoReadAll,
     requirePath: typeof requirePath === "boolean" ? requirePath : DEFAULT_CONFIG.requirePath,
     strictInput: typeof strictInput === "boolean" ? strictInput : DEFAULT_CONFIG.strictInput,
     boundaryDedupMode: parseBoundaryDedupMode(boundaryDedupMode, legacyBoundaryDedup),
@@ -153,6 +157,10 @@ export async function toggleAutoRead(): Promise<boolean> {
 export async function toggleAnchorGrep(): Promise<boolean> {
   const config = await updateConfig((c) => { c.anchorGrepEnabled = !c.anchorGrepEnabled; });
   return config.anchorGrepEnabled;
+}
+export async function toggleAutoReadAll(): Promise<boolean> {
+  const config = await updateConfig((c) => { c.autoReadAll = !(c.autoReadAll === true); });
+  return config.autoReadAll === true;
 }
 export async function toggleRequirePath(): Promise<boolean> {
   const config = await updateConfig((c) => { c.requirePath = !c.requirePath; });

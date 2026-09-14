@@ -11,6 +11,7 @@ export const mockIsolatedFiles = [
   "test/core/startup.test.ts",
   "test/core/hash-store-engine.test.ts",
   "test/tools/grep-pool-skip.test.ts",
+  "test/core/auto-read-all-fallback.test.ts",
 ];
 
 export const heavyTestFiles = [

@@ -285,7 +285,7 @@ export function clearRgPathCache(): void {
   cachedRgPath = undefined;
 }
 
-async function resolveRgPath(): Promise<string> {
+export async function resolveRgPath(): Promise<string> {
   if (cachedRgPath !== undefined) return cachedRgPath;
   try {
     const r = spawnSync("rg", ["--version"], { stdio: "pipe" });

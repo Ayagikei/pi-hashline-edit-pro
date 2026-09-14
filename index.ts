@@ -6,6 +6,7 @@ import { regInsert } from "./src/insert";
 import { regGrep } from "./src/grep";
 import { regUndo, clearUndo } from "./src/replace-undo";
 import { regRead, fmtReadPreview } from "./src/read";
+import { buildAutoReadAllInjection, autoReadAllBudget } from "./src/auto-read-all";
 import type { RMetrics } from "./src/replace-response";
 import type { ReplaceDetails } from "./src/replace";
 import { extractWarnings } from "./src/replace-render";
@@ -13,6 +14,7 @@ import { MAX_HASH_LINES } from "./src/hashline";
 import {
   readConfigWithStatus,
   toggleAutoRead,
+  toggleAutoReadAll,
   toggleAnchorGrep,
   toggleRequirePath,
   toggleStrictInput,
@@ -33,6 +35,7 @@ import { valAccess } from "./src/validation";
 import { splitLines } from "./src/utils";
 import { hashSource } from "./src/hashline";
 import { contentChecksum } from "./src/hashline/hasher";
+import { AUTO_READ_ALL_CUSTOM_TYPE } from "./src/constants";
 
 export default function (pi: ExtensionAPI): void {
   regRead(pi);
@@ -44,6 +47,8 @@ export default function (pi: ExtensionAPI): void {
   registerWriteHook(pi);
 
   let autoRead = true;
+  let autoReadAll = false;
+  let autoReadAllInjected = false;
   let grepWasActive = false;
 
   async function refreshEditTools(): Promise<void> {
@@ -77,6 +82,9 @@ export default function (pi: ExtensionAPI): void {
     const { config, corrupted } = await readConfigWithStatus();
     if (corrupted && (ctx as { hasUI?: boolean }).hasUI) ctx.ui.notify("Hashline config was corrupt and was reset to defaults", "warning");
     autoRead = config.autoRead;
+    autoReadAll = config.autoReadAll === true;
+    const sessionBranch = (ctx as { sessionManager?: { getBranch?: () => Array<{ type?: string; customType?: string }> } }).sessionManager?.getBranch?.() ?? [];
+    autoReadAllInjected = sessionBranch.some((entry) => entry.type === "custom_message" && entry.customType === AUTO_READ_ALL_CUSTOM_TYPE);
     await refreshEditTools();
     pi.setActiveTools(
       pi.getActiveTools().filter((t) =>
@@ -98,8 +106,22 @@ export default function (pi: ExtensionAPI): void {
     }
   });
 
+  pi.on("before_agent_start", async (_event, ctx) => withAnchorSession(ctx, async () => {
+    if (!autoReadAll || autoReadAllInjected) return;
+    autoReadAllInjected = true;
+    try {
+      const injection = await buildAutoReadAllInjection(ctx.cwd, autoReadAllBudget(ctx.model));
+      if (!injection) return;
+      if (ctx.hasUI) ctx.ui.notify(`Auto-read all: attached ${injection.files} file(s) with anchors`, "info");
+      return { message: { customType: AUTO_READ_ALL_CUSTOM_TYPE, content: injection.text, display: false } };
+    } catch (error) {
+      console.error("Auto-read all failed:", error);
+      return;
+    }
+  }));
+
   pi.registerCommand("hashline-config", {
-    description: "Open the hashline settings window (auto-read, diff context, grep, path, strict input, dedup)",
+    description: "Open the hashline settings window (auto-read, auto-read all, diff context, grep, path, strict input, dedup)",
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/hashline-config requires interactive mode", "error");
@@ -112,6 +134,7 @@ export default function (pi: ExtensionAPI): void {
           done,
           onToggle: async (key, delta) => {
             if (key === "autoRead") autoRead = await toggleAutoRead();
+            else if (key === "autoReadAll") { autoReadAll = await toggleAutoReadAll(); autoReadAllInjected = false; }
             else if (key === "diffContextLines") await adjustDiffContextLines(delta ?? 1);
             else if (key === "anchorGrepEnabled") {
               const enabled = await toggleAnchorGrep();

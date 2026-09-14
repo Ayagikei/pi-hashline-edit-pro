@@ -152,6 +152,7 @@ export async function makeTempDir(prefix: string): Promise<string> {
 }
 export function makeFakePiRegistry() {
   const tools = new Map<string, any>();
+  let activeTools: string[] = [];
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   return {
     pi: {
@@ -180,6 +181,10 @@ export function makeFakePiRegistry() {
         tools.set(tool.name, tool);
       },
       registerCommand() {},
+      getActiveTools: () => activeTools,
+      setActiveTools(next: string[]) {
+        activeTools = next;
+      },
       on(event: string, handler: (...args: unknown[]) => unknown) {
         handlers.set(event, handler);
       },
@@ -196,10 +201,10 @@ export function setupIntegrationTest(cwd: string) {
   resetRegistryForTests();
   resetBatchStateForTests();
   initRegistry(undefined);
-  const { pi, getTool } = makeFakePiRegistry();
+  const { pi, handlers, getTool } = makeFakePiRegistry();
   register(pi);
   const ctx = { cwd, ui: { notify() {} } } as any;
-  return { pi, getTool, ctx, readTool: getTool("read"), editTool: getTool("replace") };
+  return { pi, handlers, getTool, ctx, readTool: getTool("read"), editTool: getTool("replace") };
 }
 export function setupReadTest(cwd: string) {
   const { pi, getTool } = makeFakePiRegistry();

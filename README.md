@@ -158,6 +158,14 @@ After `replace`, `insert`, and `undo_last_change`, the result shows the post-edi
 
 Auto-read keeps the same 50KB and 2000-line budget as `read`. Auto-read and Diff context live in `/hashline-config` and persist across sessions. The post-edit diff shows 1 surrounding line by default; change Diff context in `/hashline-config` (0-10, needs Auto-read) to show more or fewer.
 
+### Auto-read all
+
+Auto-read all is off by default; enable it in `/hashline-config`. On the first turn of a session, the extension discovers every file in the working directory that is not git-ignored (`git ls-files`, falling back to `ripgrep`, then to a directory walk), reads each one, and attaches the resulting `anchor│content` rows to the conversation as one extension message before the model answers. Those anchors are served exactly like `read` output, so the model can `replace` and `insert` immediately without calling `read` first. The message is injected once per session; resumed, forked, and cloned sessions that already contain it skip the injection.
+
+Files are filtered before injection: symlinks, directories, image extensions, binary files (a NUL byte in the first 8KB), and files over 200KB are skipped. The attachment stops at 500 files or at a byte budget derived from the model's context window (200KB floor, 2MB ceiling), and it never drops below one file. Skipped and not-attached files are named at the end of the message so the model can `read` them on demand. A file whose `read` output is truncated keeps its truncation hint, so the rest can be paged in with `read`.
+
+The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll`.
+
 ## Tool result details
 
 All five tools return machine-readable metadata in `details` alongside the model-visible text.
@@ -173,7 +181,7 @@ All five tools return machine-readable metadata in `details` alongside the model
 
 | Command | Description |
 | --- | --- |
-| `/hashline-config` | Open the settings window: auto-read anchors, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
+| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all files, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
 | `/clear-anchors` | Clear the session's anchor claims. Anchors are re-claimed on the next `read`. |
 
 Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a setting is first changed in `/hashline-config`:
@@ -181,6 +189,7 @@ Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a se
 ```json
 {
   "autoRead": true,
+  "autoReadAll": false,
   "anchorGrepEnabled": true,
   "requirePath": false,
   "strictInput": false,
