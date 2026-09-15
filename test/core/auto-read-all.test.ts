@@ -6,16 +6,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import { autoReadAllBudget, buildAutoReadAllInjection, discoverAutoReadAllFiles } from "../../src/auto-read-all";
 import { ownersForPath, servedForPath } from "../../src/anchor-registry";
 import { resolveTarget } from "../../src/fs-write";
-import { shutdownHashStore } from "../../src/hash-store";
-import { makeTempDir, withHome } from "../support/fixtures";
+import { makeTempDir, rmRetry, withHome } from "../support/fixtures";
 
 const restoreHome = withHome(process.env.HOME);
 
 afterAll(restoreHome);
 
 async function cleanupCwd(cwd: string): Promise<void> {
-  shutdownHashStore();
-  await rm(cwd, { recursive: true, force: true });
+  await rmRetry(cwd);
 }
 
 function initGitRepo(cwd: string): void {

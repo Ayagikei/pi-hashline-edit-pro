@@ -18,7 +18,7 @@ export async function getWritableTempRoot(): Promise<string> {
   await mkdir(fallback, { recursive: true });
   return fallback;
 }
-async function rmRetry(target: string): Promise<void> {
+export async function rmRetry(target: string): Promise<void> {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       await rm(target, { recursive: true, force: true });

@@ -1,17 +1,15 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { shutdownHashStore } from "../../src/hash-store";
-import { makeTempDir, setupIntegrationTest, withHome } from "../support/fixtures";
+import { makeTempDir, rmRetry, setupIntegrationTest, withHome } from "../support/fixtures";
 
 const restoreHome = withHome(process.env.HOME);
 
 afterAll(restoreHome);
 
 async function cleanupCwd(cwd: string): Promise<void> {
-  shutdownHashStore();
-  await rm(cwd, { recursive: true, force: true });
+  await rmRetry(cwd);
 }
 
 function initGitRepo(cwd: string): void {
