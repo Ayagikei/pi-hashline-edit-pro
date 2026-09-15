@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { autoReadAllBudget, buildAutoReadAllInjection, discoverAutoReadAllFiles } from "../../src/auto-read-all";
+import { autoReadAllBudget, buildAutoReadAllInjection, chunkAutoReadAllSections, discoverAutoReadAllFiles, AUTO_READ_ALL_CHUNK_BYTES } from "../../src/auto-read-all";
 import { ownersForPath, servedForPath } from "../../src/anchor-registry";
 import { resolveTarget } from "../../src/fs-write";
 import { makeTempDir, rmRetry, withHome } from "../support/fixtures";
@@ -165,6 +165,62 @@ describe("discoverAutoReadAllFiles", () => {
       const discovery = await discoverAutoReadAllFiles(cwd);
       expect(discovery.files).toEqual(["bundle.js", "generated.js", "keep.ts"]);
       expect(discovery.skippedByName).toBe(skipped.length);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("marks complete files and truncated files with offset hints", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-markers-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "small.txt"), "alpha\nbeta\n");
+      await writeFile(join(cwd, "big.txt"), Array.from({ length: 2500 }, (_, i) => `line ${i}`).join("\n") + "\n");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      expect(injection).toBeDefined();
+      expect(injection!.completeFiles).toBe(1);
+      expect(injection!.truncatedFiles).toBe(1);
+      expect(injection!.text).toContain("=== small.txt ===");
+      expect(injection!.text).toContain("[complete, 2 lines; do NOT re-read]");
+      expect(injection!.text).toContain("=== big.txt ===");
+      expect(injection!.text).toContain("[truncated, showing ");
+      expect(injection!.text).toContain("use read with offset=");
+      expect(injection!.text).toContain("[coverage: 1 complete, 1 truncated,");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("splits sections into file-boundary chunks under the byte cap", async () => {
+    const sections = ["=== a.txt ===\n[complete, 1 lines; do NOT re-read]\nAAA│a", "=== b.txt ===\n[complete, 1 lines; do NOT re-read]\nBBB│b", "=== c.txt ===\n[complete, 1 lines; do NOT re-read]\nCCC│c"];
+    const chunks = chunkAutoReadAllSections(sections, 60);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks.join("\n\n")).toBe(sections.join("\n\n"));
+    for (const chunk of chunks) {
+      expect(chunk.startsWith("=== ")).toBe(true);
+      expect(chunk).toContain("=== ");
+    }
+    const single = chunkAutoReadAllSections(sections, 1_000_000);
+    expect(single).toHaveLength(1);
+    expect(single[0]).toBe(sections.join("\n\n"));
+    expect(AUTO_READ_ALL_CHUNK_BYTES).toBe(48 * 1024);
+  });
+
+  it("packs injection chunks with file boundaries preserved", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-chunks-");
+    try {
+      initGitRepo(cwd);
+      for (let i = 0; i < 20; i++) {
+        await writeFile(join(cwd, `f${i}.txt`), `${"x".repeat(5000)}\n`);
+      }
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      expect(injection).toBeDefined();
+      expect(injection!.chunks.length).toBeGreaterThan(1);
+      for (const chunk of injection!.chunks) {
+        expect(Buffer.byteLength(chunk, "utf-8")).toBeLessThanOrEqual(AUTO_READ_ALL_CHUNK_BYTES + 6000);
+        expect(chunk.startsWith("=== ")).toBe(true);
+      }
+      expect(injection!.chunks.join("\n\n").split("=== ").length).toBe(injection!.files + 1);
     } finally {
       await cleanupCwd(cwd);
     }
