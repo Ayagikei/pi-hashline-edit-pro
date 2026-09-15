@@ -21,6 +21,10 @@ export async function getWritableTempRoot(): Promise<string> {
   await mkdir(fallback, { recursive: true });
   return fallback;
 }
+export async function closeHashStore(): Promise<void> {
+  await loadHashStore().catch(() => undefined);
+  shutdownHashStore();
+}
 export async function rmRetry(target: string): Promise<void> {
   for (let attempt = 0; attempt < 10; attempt++) {
     try {
@@ -28,8 +32,7 @@ export async function rmRetry(target: string): Promise<void> {
       return;
     } catch (error) {
       const code = errCode(error);
-      if (code !== "EBUSY" && code !== "EPERM") throw error;
-      await loadHashStore().catch(() => undefined);
+      if (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY") throw error;
       shutdownHashStore();
       if (attempt === 9) throw error;
       await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
@@ -50,8 +53,7 @@ export async function setupTestHome(): Promise<{
     home: tmpHome,
     testPath,
     cleanup: async () => {
-      await loadHashStore().catch(() => undefined);
-      shutdownHashStore();
+      await closeHashStore();
       vi.unstubAllEnvs();
       await rmRetry(tmpHome);
     },
@@ -98,8 +100,7 @@ export async function withTempFile(
     await writeFile(path, content, "utf-8");
     await run({ cwd, path });
   } finally {
-    await loadHashStore().catch(() => undefined);
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -115,8 +116,7 @@ export async function withTempBytes(
     await writeFile(path, bytes);
     await run({ cwd, path });
   } finally {
-    await loadHashStore().catch(() => undefined);
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -131,8 +131,7 @@ export async function withTempSubdir(
     await mkdir(path, { recursive: true });
     await run({ cwd, path });
   } finally {
-    await loadHashStore().catch(() => undefined);
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -146,8 +145,7 @@ export async function withTempDir(
   try {
     await run(dir);
   } finally {
-    await loadHashStore().catch(() => undefined);
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(dir);
     restoreHome();
   }

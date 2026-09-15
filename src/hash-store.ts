@@ -22,6 +22,7 @@ import { snapshotCache, cacheSnapshot, SNAPSHOT_CACHE_LIMIT } from "./hash-store
 export { isValidHashList, parseHashList, parseStoredHashes, isCorruptionError };
 export { SNAPSHOT_CACHE_LIMIT };
 export const STORE_NOT_OPEN_MESSAGE = "Hash store is not open; transactional update aborted";
+export const STORE_SHUT_DOWN_MESSAGE = "Hash store was shut down while it was opening; call loadHashStore again.";
 
 type SqlParams = (string | number | null)[];
 
@@ -143,15 +144,16 @@ export interface UndoRecord {
 let cachedDb: { path: string; db: RawDb; stmts: Prepared } | null = null;
 let opening: { path: string; promise: Promise<HashStore> } | null = null;
 let exitHandlerRegistered = false;
+let storeEpoch = 0;
+const liveDbs = new Set<RawDb>();
 
 function openDb(storePath: string): { db: RawDb; stmts: Prepared } {
   const db = openDbFn(storePath);
+  liveDbs.add(db);
   try {
     return buildStore(db);
   } catch (error) {
-    try {
-      db.close();
-    } catch {}
+    shutdownDb(db);
     throw error;
   }
 }
@@ -259,11 +261,15 @@ async function quarantineStore(storePath: string): Promise<void> {
 }
 
 function shutdownDb(db: RawDb): void {
+  if (!liveDbs.delete(db)) return;
   try {
     db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   } catch {
   }
-  db.close();
+  try {
+    db.close();
+  } catch {
+  }
 }
 
 async function openStore(storePath: string): Promise<HashStore> {
@@ -271,6 +277,7 @@ async function openStore(storePath: string): Promise<HashStore> {
     return { stmts: cachedDb.stmts, engine: sqliteEngine };
   }
   if (cachedDb) shutdownHashStore();
+  const epoch = storeEpoch;
   await initHasher();
   await mkdir(hashStoreDir(), { recursive: true, mode: 0o700 });
   if (process.platform !== "win32") {
@@ -327,6 +334,10 @@ async function openStore(storePath: string): Promise<HashStore> {
       console.error("Hash store migration failed; continuing without legacy import:", error);
     }
   }
+  if (storeEpoch !== epoch) {
+    shutdownDb(db);
+    throw new Error(STORE_SHUT_DOWN_MESSAGE);
+  }
   cachedDb = { path: storePath, db, stmts };
 
   if (!exitHandlerRegistered) {
@@ -352,17 +363,20 @@ export function loadHashStore(): Promise<HashStore> {
     return opening.promise;
   }
   const promise = openStore(storePath).finally(() => {
-    if (opening?.path === storePath) opening = null;
+    if (opening?.promise === promise) opening = null;
   });
   opening = { path: storePath, promise };
   return promise;
 }
 
 export function shutdownHashStore(): void {
+  storeEpoch += 1;
   if (cachedDb) {
     shutdownDb(cachedDb.db);
     cachedDb = null;
   }
+  for (const db of [...liveDbs]) shutdownDb(db);
+  opening = null;
   snapshotCache.clear();
 }
 

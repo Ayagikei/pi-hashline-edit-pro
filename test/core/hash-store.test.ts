@@ -20,7 +20,7 @@ import {
 import { HASH_STORE_VERSION } from "../../src/constants";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher";
 import { splitLines } from "../../src/utils";
-import { withTempDir } from "../support/fixtures";
+import { withHome, withTempDir } from "../support/fixtures";
 
 beforeAll(async () => {
   await initHasher();
@@ -210,6 +210,48 @@ describe("hash-store - loadHashStore", () => {
       const store = await loadHashStore();
       const isBun = typeof (process.versions as Record<string, string | undefined>).bun === "string";
       expect(store.engine).toBe(isBun ? "bun:sqlite" : "node:sqlite");
+    });
+  });
+
+  it("closes a handle whose open finished after shutdownHashStore", async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
+      const { DatabaseSync } = await import("node:sqlite");
+      const closeSpy = vi.spyOn(DatabaseSync.prototype, "close");
+      try {
+        const pending = loadHashStore();
+        shutdownHashStore();
+        await expect(pending).rejects.toThrow(/shut down while it was opening/);
+        expect(closeSpy).toHaveBeenCalled();
+        const store = await loadHashStore();
+        upsertSnapshot(store, "/after-shutdown.ts", contentChecksum("x\n"), 1, ["ATIm"]);
+        expect(getSnapshot(store, "/after-shutdown.ts", "x\n")).toEqual(["ATIm"]);
+      } finally {
+        closeSpy.mockRestore();
+      }
+    });
+  });
+
+  it("closes every live handle on shutdown, including handles for superseded paths", async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async (dir) => {
+      const homeA = join(dir, "home-a");
+      const homeB = join(dir, "home-b");
+      await mkdir(join(homeA, ".config", "pi-hashline-edit-pro"), { recursive: true });
+      await mkdir(join(homeB, ".config", "pi-hashline-edit-pro"), { recursive: true });
+      const restoreA = withHome(homeA);
+      const first = loadHashStore();
+      restoreA();
+      const restoreB = withHome(homeB);
+      const second = loadHashStore();
+      restoreB();
+      await Promise.all([first, second]);
+      const { DatabaseSync } = await import("node:sqlite");
+      const closeSpy = vi.spyOn(DatabaseSync.prototype, "close");
+      try {
+        shutdownHashStore();
+        expect(closeSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        closeSpy.mockRestore();
+      }
     });
   });
 });

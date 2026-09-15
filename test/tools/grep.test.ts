@@ -1,12 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, readFile, mkdtemp, rm } from "fs/promises";
+import { mkdir, writeFile, readFile, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadHashStore, getSnapshot, shutdownHashStore } from "../../src/hash-store";
+import { loadHashStore, getSnapshot } from "../../src/hash-store";
 import { resolveTarget } from "../../src/fs-write";
 import { ownersForPath, initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { toCwd } from "../../src/paths";
-import { withTempFile, withTempDir, withHome, makeFakePiRegistry, setupIntegrationTest, getText, extractHash } from "../support/fixtures";
+import { closeHashStore, withTempFile, withTempDir, withHome, makeFakePiRegistry, setupIntegrationTest, getText, extractHash, rmRetry } from "../support/fixtures";
 import register from "../../index";
 
 beforeEach(async () => {
@@ -267,8 +267,8 @@ async function withSystemTempDir(prefix: string, run: (dir: string) => Promise<v
   try {
     await run(dir);
   } finally {
-    shutdownHashStore();
-    await rm(dir, { recursive: true, force: true });
+    await closeHashStore();
+    await rmRetry(dir);
     restoreHome();
   }
 }
