@@ -17,7 +17,7 @@ export { assertInsertReq, type InsertReq };
 
 const insertAnchorSchema = Type.String({
   description:
-    'Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. A pasted diff row or `anchor│` prefix is stripped with a warning. The anchor line is preserved; lines go after or before it.',
+    'Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. A pasted diff row or `anchor│` prefix is stripped with a warning. The anchor line is preserved; lines go after or before it.',
 });
 
 const insertDirectionSchema = Type.Union(

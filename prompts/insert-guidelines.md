@@ -1,1 +1,1 @@
-- `insert`: a batch may pair one `before` and one `after` on the same anchor line; the pair composes into a single insertion. Any other same-line pair is an overlap.
+

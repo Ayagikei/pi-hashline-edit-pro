@@ -58,6 +58,7 @@ export default function (pi: ExtensionAPI): void {
       regRead(pi, flags);
       regReplace(pi, flags);
       regInsert(pi, flags);
+      regUndo(pi, flags);
     } catch (error) {
       console.error("Failed to refresh edit tools:", error);
     }

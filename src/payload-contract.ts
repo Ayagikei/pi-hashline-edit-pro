@@ -14,12 +14,12 @@ const replacementLinesSchema = Type.Array(
 
 const removeFromSchema = Type.String({
   description:
-    "Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. Marks the FIRST line to remove (inclusive)",
+    "Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. Marks the FIRST line to remove (inclusive)",
 });
 
 const removeToSchema = Type.String({
   description:
-    "Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. Marks the LAST line to remove (inclusive)",
+    "Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. Marks the LAST line to remove (inclusive)",
 });
 const pathRequiredSchema = Type.String({
   description:

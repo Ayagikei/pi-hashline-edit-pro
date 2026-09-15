@@ -3,7 +3,7 @@ import { dirname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 import { loadGuide, loadP } from "../../src/prompts";
-import { withReadPrompts, withReplacePrompts, withInsertPrompts, DEFAULT_EDIT_FLAGS } from "../../src/edit-common";
+import { withReadPrompts, withReplacePrompts, withInsertPrompts, withUndoPrompts, DEFAULT_EDIT_FLAGS } from "../../src/edit-common";
 import { regRead } from "../../src/read";
 import { makeFakePiRegistry } from "../support/fixtures";
 
@@ -23,6 +23,12 @@ const readBase = {
   description: loadP("../prompts/read.md"),
   snippet: loadP("../prompts/read-snippet.md"),
   guidelines: loadGuide("../prompts/read-guidelines.md"),
+};
+
+const undoBase = {
+  description: loadP("../prompts/undo-last-change.md"),
+  snippet: loadP("../prompts/undo-last-change-snippet.md"),
+  guidelines: loadGuide("../prompts/undo-last-change-guidelines.md"),
 };
 
 function collectTsFiles(dir: string): string[] {
@@ -171,7 +177,29 @@ describe("edit prompt flag variants", () => {
   it("withReplacePrompts drops the diff-follow hint when auto-read is off", () => {
     const result = withReplacePrompts(replaceBase, { ...DEFAULT_EDIT_FLAGS, autoRead: false });
     expect(result.description).not.toContain("Anchor follow-up edits on the `+anchor│`");
-    expect(result.guidelines.some((g) => g.includes("one batch per file per turn; verify each result"))).toBe(true);
+    expect(result.guidelines.some((g) => g.includes("post-edit diff"))).toBe(false);
+  });
+
+  it("withReplacePrompts rewrites the batch diff wording when auto-read is off", () => {
+    const result = withReplacePrompts(replaceBase, { ...DEFAULT_EDIT_FLAGS, autoRead: false });
+    expect(result.description).toContain("combined result");
+    expect(result.description).not.toContain("combined diff");
+  });
+
+  it("withInsertPrompts rewrites the batch diff wording when auto-read is off", () => {
+    const on = withInsertPrompts(insertBase, DEFAULT_EDIT_FLAGS);
+    expect(on.description).toContain("combined diff");
+    const off = withInsertPrompts(insertBase, { ...DEFAULT_EDIT_FLAGS, autoRead: false });
+    expect(off.description).toContain("combined result");
+    expect(off.description).not.toContain("combined diff");
+  });
+
+  it("withUndoPrompts keeps diff detail when auto-read is on and neutralizes when off", () => {
+    const on = withUndoPrompts(undoBase, DEFAULT_EDIT_FLAGS);
+    expect(on.guidelines.some((g) => g.includes("bad diff"))).toBe(true);
+    const off = withUndoPrompts(undoBase, { ...DEFAULT_EDIT_FLAGS, autoRead: false });
+    expect(off.guidelines.some((g) => g.includes("bad diff"))).toBe(false);
+    expect(off.guidelines.some((g) => g.includes("bad edit"))).toBe(true);
   });
 
   it("withInsertPrompts adds the require-path and strict-input notices", () => {

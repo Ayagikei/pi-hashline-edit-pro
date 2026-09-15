@@ -13,6 +13,7 @@ import { genDiff, genPatch, spansFromHashes } from "./replace-diff";
 import { getDiffContextLines } from "./config";
 import { cntDiff, errCode, makePrepareArguments, splitLines } from "./utils";
 import { loadP, loadGuide } from "./prompts";
+import { withUndoPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { buildMetrics } from "./replace-response";
 import { renderEditResult, fmtCall } from "./replace-render";
 import { Text } from "@earendil-works/pi-tui";
@@ -102,13 +103,18 @@ function fallbackFileMode(): number {
   return 0o666 & ~process.umask();
 }
 
-export function regUndo(pi: ExtensionAPI): void {
+export function regUndo(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FLAGS): void {
+  const prompted = withUndoPrompts({
+    description: loadP("../prompts/undo-last-change.md"),
+    snippet: loadP("../prompts/undo-last-change-snippet.md"),
+    guidelines: loadGuide("../prompts/undo-last-change-guidelines.md"),
+  }, flags);
   pi.registerTool({
     name: "undo_last_change",
     label: "Undo Last Change",
-    description: loadP("../prompts/undo-last-change.md"),
-    promptSnippet: loadP("../prompts/undo-last-change-snippet.md"),
-    promptGuidelines: loadGuide("../prompts/undo-last-change-guidelines.md"),
+    description: prompted.description,
+    promptSnippet: prompted.snippet,
+    promptGuidelines: prompted.guidelines,
     prepareArguments: makePrepareArguments(),
     parameters: Type.Object({
       path: Type.String({
