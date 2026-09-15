@@ -39,6 +39,7 @@ const IMAGE_EXTENSIONS = new Set([
   ".jxl",
   ".png",
   ".psd",
+  ".svg",
   ".tif",
   ".tiff",
   ".webp",
@@ -61,6 +62,8 @@ export const AUTO_READ_ALL_EXCLUDED_SEGMENTS = [
   "pods",
   "carthage",
   "deriveddata",
+  "coreui",
+  "coreui-icons",
 ];
 export const AUTO_READ_ALL_EXCLUDED_NAMES = [
   "package-lock.json",
@@ -97,6 +100,8 @@ function isExcludedByPattern(baseLower: string): boolean {
   if (baseLower.endsWith(".designer.cs")) return true;
   if (baseLower.endsWith(".g.cs")) return true;
   if (baseLower.endsWith(".snap")) return true;
+  if (baseLower.startsWith("coreui-icons.")) return true;
+  if (baseLower === "coreui.css") return true;
   return false;
 }
 

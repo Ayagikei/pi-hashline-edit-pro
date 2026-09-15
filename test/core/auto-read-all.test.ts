@@ -134,7 +134,7 @@ describe("discoverAutoReadAllFiles", () => {
     const cwd = await makeTempDir("pi-hashline-auto-read-all-vendor-");
     try {
       initGitRepo(cwd);
-      const segments = ["vendor", "node_modules", "bower_components", "third_party", "thirdparty", "jspm_packages", ".venv", "venv", "site-packages", "__pycache__", ".tox", ".gradle", ".terraform", "Pods", "Carthage", "DerivedData"];
+      const segments = ["vendor", "node_modules", "bower_components", "third_party", "thirdparty", "jspm_packages", ".venv", "venv", "site-packages", "__pycache__", ".tox", ".gradle", ".terraform", "Pods", "Carthage", "DerivedData", "coreui", "coreui-icons"];
       await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
       await writeFile(join(cwd, "vendor_notes.txt"), "notes\n");
       for (const segment of segments) {
@@ -151,11 +151,34 @@ describe("discoverAutoReadAllFiles", () => {
     }
   });
 
+  it("skips all SVG files and coreui folders", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-svg-coreui-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+      await writeFile(join(cwd, "icon.svg"), "<svg></svg>\n");
+      await writeFile(join(cwd, "logo.SVG"), "<svg></svg>\n");
+      await mkdir(join(cwd, "resources", "scss", "coreui-icons"), { recursive: true });
+      await writeFile(join(cwd, "resources", "scss", "coreui-icons", "icon.scss"), ".icon {}\n");
+      await mkdir(join(cwd, "public", "images", "coreui"), { recursive: true });
+      await writeFile(join(cwd, "public", "images", "coreui", "logo.png"), "not an image\n");
+      const discovery = await discoverAutoReadAllFiles(cwd);
+      expect(discovery.files).toEqual(["keep.ts"]);
+      expect(discovery.skippedBinary).toBeGreaterThanOrEqual(2);
+      expect(discovery.skippedByName).toBeGreaterThanOrEqual(2);
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      expect(injection!.text).not.toContain("=== icon.svg ===");
+      expect(injection!.text).not.toContain("coreui-icons");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
   it("skips Tier 3 vendored and generated name patterns", async () => {
     const cwd = await makeTempDir("pi-hashline-auto-read-all-patterns-");
     try {
       initGitRepo(cwd);
-      const skipped = ["app.min.js", "style.min.css", "lib.min.mjs", "app-min.js", "style-min.css", "vendor.bundle.js", "app.chunk.js", "lib.umd.js", "app.js.map", "custom.lock", "yarn.lock", "composer.lock", "Gemfile.lock", "Cargo.lock", "poetry.lock", "Pipfile.lock", "go.sum", "flake.lock", ".eslintcache", "foo.generated.js", "foo.gen.js", "foo_pb2.py", "foo.pb.go", "foo.g.dart", "foo.freezed.dart", "foo.designer.cs", "foo.g.cs", "foo.snap"];
+      const skipped = ["app.min.js", "style.min.css", "lib.min.mjs", "app-min.js", "style-min.css", "vendor.bundle.js", "app.chunk.js", "lib.umd.js", "app.js.map", "custom.lock", "yarn.lock", "composer.lock", "Gemfile.lock", "Cargo.lock", "poetry.lock", "Pipfile.lock", "go.sum", "flake.lock", ".eslintcache", "foo.generated.js", "foo.gen.js", "foo_pb2.py", "foo.pb.go", "foo.g.dart", "foo.freezed.dart", "foo.designer.cs", "foo.g.cs", "foo.snap", "coreui-icons.css", "coreui-icons.linear.css", "coreui.css"];
       await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
       await writeFile(join(cwd, "bundle.js"), "export const a = 1;\n");
       await writeFile(join(cwd, "generated.js"), "export const a = 1;\n");
