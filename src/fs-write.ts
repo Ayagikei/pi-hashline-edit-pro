@@ -21,7 +21,7 @@ export interface FileIdentity {
 }
 
 function sameIdentity(
-  actual: Pick<Awaited<ReturnType<typeof stat>>, "dev" | "ino">,
+  actual: FileIdentity,
   expected: FileIdentity,
 ): boolean {
   return actual.dev === expected.dev && actual.ino === expected.ino;

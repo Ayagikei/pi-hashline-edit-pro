@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -74,6 +74,31 @@ describe("discoverAutoReadAllFiles", () => {
       const discovery = await discoverAutoReadAllFiles(cwd);
       expect(discovery.files).toEqual([]);
       expect(discovery.skippedOther).toBe(1);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("skips package-lock.json anywhere in the tree", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-lock-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "package-lock.json"), "{}\n");
+      await mkdir(join(cwd, "sub"));
+      await writeFile(join(cwd, "sub", "package-lock.json"), "{}\n");
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+
+      const discovery = await discoverAutoReadAllFiles(cwd);
+      expect(discovery.files).toEqual(["keep.ts"]);
+      expect(discovery.discovered).toBe(3);
+      expect(discovery.skippedByName).toBe(2);
+
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
+      expect(injection).toBeDefined();
+      expect(injection!.text).toContain("=== keep.ts ===");
+      expect(injection!.text).not.toContain("=== package-lock.json ===");
+      expect(injection!.text).not.toContain("=== sub/package-lock.json ===");
+      expect(injection!.text).toContain("2 file(s) skipped by name (package-lock.json)");
     } finally {
       await cleanupCwd(cwd);
     }

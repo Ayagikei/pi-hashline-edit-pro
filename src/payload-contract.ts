@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { isRec, normalizeAnchors, normalizeFilePath, rejectUnknownFields, assertNoNul } from "./utils";
+import { isRec, normalizeRequest, rejectUnknownFields, assertNoNul } from "./utils";
 
 const replacementLinesSchema = Type.Array(
   Type.String({
@@ -77,20 +77,12 @@ export function assertReq(request: unknown): asserts request is ReqParams {
   assertNoNul(request.replacement_lines);
 }
 
-export function normReq(input: unknown): unknown {
-  if (!isRec(input)) {
-    return input;
-  }
-  const record: Record<string, unknown> = { ...input };
-  normalizeFilePath(record);
-  normalizeAnchors(record);
-  return record;
-}
+export { normalizeRequest as normReq } from "./utils";
 
 export function getPreviewInput(args: unknown): { path?: string; remove_from: string; remove_to: string; replacement_lines: string[] } | null {
   let normalized: unknown;
   try {
-    normalized = normReq(args);
+    normalized = normalizeRequest(args);
   } catch {
     return null;
   }

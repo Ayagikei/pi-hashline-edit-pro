@@ -42,7 +42,3 @@ export function retriedWrite(stmt: { run(...params: (string | number | null)[]):
     withBusyRetry(() => { stmt.run(...params); });
   };
 }
-
-export async function openDbWithBusyRetryAsync<T>(fn: () => T): Promise<T> {
-  return withBusyRetryAsync(fn);
-}

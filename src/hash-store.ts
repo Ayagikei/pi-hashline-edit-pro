@@ -18,7 +18,7 @@ import {
 import {
   withBusyRetry,
   retriedWrite,
-  openDbWithBusyRetryAsync,
+  withBusyRetryAsync,
 } from "./hash-store/retry";
 import { snapshotCache, cacheSnapshot, SNAPSHOT_CACHE_LIMIT, touchSession, clearSession, forgetSession } from "./hash-store/cache";
 
@@ -283,19 +283,19 @@ async function openStore(storePath: string): Promise<HashStore> {
   let existed = existsSync(storePath);
   let opened: { db: RawDb; stmts: Prepared };
   try {
-    opened = await openDbWithBusyRetryAsync(() => openDb(storePath));
+    opened = await withBusyRetryAsync(() => openDb(storePath));
   } catch (error) {
     if (!isCorruptionError(error)) throw error;
     console.error("Hash store failed to open, rebuilding:", error);
     await quarantineStore(storePath);
     existed = false;
-    opened = await openDbWithBusyRetryAsync(() => openDb(storePath));
+    opened = await withBusyRetryAsync(() => openDb(storePath));
   }
   if (!isHealthy(opened.db)) {
     shutdownDb(opened.db);
     await quarantineStore(storePath);
     existed = false;
-    opened = await openDbWithBusyRetryAsync(() => openDb(storePath));
+    opened = await withBusyRetryAsync(() => openDb(storePath));
   }
   const { db, stmts } = opened;
   try {

@@ -22,14 +22,16 @@ export function normalizeAnchors(record: Record<string, unknown>): void {
   }
 }
 
+export function normalizeRequest(input: unknown): unknown {
+  if (!isRec(input)) return input;
+  const record: Record<string, unknown> = { ...input };
+  normalizeFilePath(record);
+  normalizeAnchors(record);
+  return record;
+}
+
 export function makePrepareArguments(): (args: unknown) => any {
-  return (args) => {
-    if (!isRec(args)) return args;
-    const record = { ...args };
-    normalizeFilePath(record);
-    normalizeAnchors(record);
-    return record;
-  };
+  return normalizeRequest;
 }
 
 export function splitLines(text: string): string[] {

@@ -606,12 +606,14 @@ interface MintedAt {
   checksum: string;
 }
 
+type ArrayPart = { count: number; added?: boolean; removed?: boolean };
+
 function computeParts(
   prevChecksums: string[] | undefined,
   newChecksums: string[],
-): Diff.ArrayChange<string>[] {
+): ArrayPart[] {
   if (!prevChecksums) {
-    return [{ count: newChecksums.length, added: true, removed: false, value: [] } as unknown as Diff.ArrayChange<string>];
+    return [{ count: newChecksums.length, added: true }];
   }
   const min = Math.min(prevChecksums.length, newChecksums.length);
   let prefix = 0;
@@ -624,37 +626,25 @@ function computeParts(
     suffix++;
   }
   if (prefix + suffix >= min && prevChecksums.length === newChecksums.length) {
-    return [{ count: newChecksums.length, value: [], added: false, removed: false } as unknown as unknown as Diff.ArrayChange<string>];
+    return [{ count: newChecksums.length }];
   }
   const prevMid = prevChecksums.slice(prefix, prevChecksums.length - suffix);
   const newMid = newChecksums.slice(prefix, newChecksums.length - suffix);
   if (prevMid.length === 0) {
-    return [
-      { count: prefix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-      { count: newMid.length, added: true, removed: false, value: [] } as unknown as Diff.ArrayChange<string>,
-      { count: suffix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-    ];
+    return [{ count: prefix }, { count: newMid.length, added: true }, { count: suffix }];
   }
   if (newMid.length === 0) {
-    return [
-      { count: prefix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-      { count: prevMid.length, removed: true, added: false, value: [] } as unknown as Diff.ArrayChange<string>,
-      { count: suffix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-    ];
+    return [{ count: prefix }, { count: prevMid.length, removed: true }, { count: suffix }];
   }
   if (prevMid.length * newMid.length > 4_000_000) {
-    return [
-      { count: prefix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-      { count: prevMid.length, removed: true, added: false, value: [] } as unknown as Diff.ArrayChange<string>,
-      { count: newMid.length, added: true, removed: false, value: [] } as unknown as Diff.ArrayChange<string>,
-      { count: suffix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>,
-    ];
+    return [{ count: prefix }, { count: prevMid.length, removed: true }, { count: newMid.length, added: true }, { count: suffix }];
   }
-  const midParts = Diff.diffArrays(prevMid, newMid) as unknown as Diff.ArrayChange<string>[];
-  const parts: Diff.ArrayChange<string>[] = [];
-  if (prefix > 0) parts.push({ count: prefix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>);
-  parts.push(...midParts);
-  if (suffix > 0) parts.push({ count: suffix, value: [], added: false, removed: false } as unknown as Diff.ArrayChange<string>);
+  const parts: ArrayPart[] = [];
+  if (prefix > 0) parts.push({ count: prefix });
+  for (const part of Diff.diffArrays(prevMid, newMid) as unknown as Array<{ count?: number; added?: boolean; removed?: boolean }>) {
+    parts.push({ count: part.count ?? 0, added: part.added, removed: part.removed });
+  }
+  if (suffix > 0) parts.push({ count: suffix });
   return parts;
 }
 
@@ -747,11 +737,11 @@ export function alignOwnership(
     for (const anchor of prevAnchors) state.everMinted.add(anchor);
   }
 
-  const parts: Diff.ArrayChange<string>[] = computeParts(prevChecksums, newChecksums);
+  const parts: ArrayPart[] = computeParts(prevChecksums, newChecksums);
   let prevIdx = 0;
   let newIdx = 0;
   for (const part of parts) {
-    const count = part.count ?? 0;
+    const count = part.count;
     if (part.added) {
       for (let k = 0; k < count; k++) {
         const checksum = newChecksums[newIdx + k]!;

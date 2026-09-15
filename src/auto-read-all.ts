@@ -43,6 +43,10 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
+export const AUTO_READ_ALL_EXCLUDED_NAMES = ["package-lock.json"];
+
+const EXCLUDED_NAME_SET = new Set(AUTO_READ_ALL_EXCLUDED_NAMES);
+
 const WALK_IGNORED_DIRS = new Set([
   ".git",
   ".hg",
@@ -72,6 +76,7 @@ export interface AutoReadAllDiscovery {
   skippedBinary: number;
   skippedLarge: number;
   skippedOther: number;
+  skippedByName: number;
 }
 
 export interface AutoReadAllInjection {
@@ -136,8 +141,12 @@ function toPosix(path: string): string {
   return sep === "/" ? path : path.split(sep).join("/");
 }
 
+function baseNameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
 function extensionOf(path: string): string {
-  const base = path.slice(path.lastIndexOf("/") + 1);
+  const base = baseNameOf(path);
   const dot = base.lastIndexOf(".");
   return dot <= 0 ? "" : base.slice(dot).toLowerCase();
 }
@@ -187,7 +196,13 @@ export async function discoverAutoReadAllFiles(cwd: string): Promise<AutoReadAll
   }
 
   const unique = [...new Set(candidates.map(toPosix))].sort();
-  const scanWindow = unique.slice(0, AUTO_READ_ALL_MAX_FILES * SCAN_LIMIT_MULTIPLIER);
+  const includable: string[] = [];
+  let skippedByName = 0;
+  for (const file of unique) {
+    if (EXCLUDED_NAME_SET.has(baseNameOf(file).toLowerCase())) skippedByName += 1;
+    else includable.push(file);
+  }
+  const scanWindow = includable.slice(0, AUTO_READ_ALL_MAX_FILES * SCAN_LIMIT_MULTIPLIER);
   const sized: string[] = [];
   let skippedBinary = 0;
   let skippedLarge = 0;
@@ -226,7 +241,7 @@ export async function discoverAutoReadAllFiles(cwd: string): Promise<AutoReadAll
   textual.sort();
   const files = textual.slice(0, AUTO_READ_ALL_MAX_FILES);
 
-  return { files, source, discovered: unique.length, skippedBinary, skippedLarge, skippedOther };
+  return { files, source, discovered: unique.length, skippedBinary, skippedLarge, skippedOther, skippedByName };
 }
 
 async function renderFile(file: string, cwd: string): Promise<string | undefined> {
@@ -243,11 +258,15 @@ async function renderFile(file: string, cwd: string): Promise<string | undefined
 
 function buildFooter(attached: number, discovery: AutoReadAllDiscovery, omitted: string[]): string {
   const notes: string[] = [];
-  const beyondCap = Math.max(0, discovery.discovered - discovery.files.length - discovery.skippedBinary - discovery.skippedLarge - discovery.skippedOther);
+  const beyondCap = Math.max(
+    0,
+    discovery.discovered - discovery.files.length - discovery.skippedBinary - discovery.skippedLarge - discovery.skippedOther - discovery.skippedByName,
+  );
   if (beyondCap > 0) notes.push(`${beyondCap} file(s) beyond the ${AUTO_READ_ALL_MAX_FILES}-file cap skipped`);
   if (discovery.skippedBinary > 0) notes.push(`${discovery.skippedBinary} binary or image file(s) skipped`);
   if (discovery.skippedLarge > 0) notes.push(`${discovery.skippedLarge} file(s) over ${formatSize(AUTO_READ_ALL_MAX_FILE_BYTES)} skipped`);
   if (discovery.skippedOther > 0) notes.push(`${discovery.skippedOther} unreadable path(s) skipped`);
+  if (discovery.skippedByName > 0) notes.push(`${discovery.skippedByName} file(s) skipped by name (${AUTO_READ_ALL_EXCLUDED_NAMES.join(", ")})`);
   const listed = omitted.slice(0, MAX_REPORTED_OMISSIONS).join(", ");
   const more = omitted.length > MAX_REPORTED_OMISSIONS ? `, ... (+${omitted.length - MAX_REPORTED_OMISSIONS} more)` : "";
   const omissionNote = omitted.length > 0 ? ` Not attached: ${listed}${more}. Use read for those.` : "";

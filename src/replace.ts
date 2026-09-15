@@ -90,7 +90,7 @@ export function hashSpan(hashes: string[], from: string, to: string): [number, n
   if (a < 0 || b < 0) return undefined;
   return [Math.min(a, b), Math.max(a, b)];
 }
-async function noteAnchorError(absolutePath: string, error: unknown, scopeHashes: string[], noPersist?: boolean): Promise<void> {
+async function noteAnchorError(absolutePath: string, error: unknown, noPersist?: boolean): Promise<void> {
   if (noPersist === true) return;
   if (error instanceof RangeStaleError) {
     adoptAnchors(absolutePath, error.rangeServedMap);
@@ -159,7 +159,7 @@ export async function execPipeline(
       strictBoundaryDedup,
     );
   } catch (error) {
-    await noteAnchorError(absolutePath, error, originalHashes, options?.noPersist);
+    await noteAnchorError(absolutePath, error, options?.noPersist);
     throw error;
   }
 
