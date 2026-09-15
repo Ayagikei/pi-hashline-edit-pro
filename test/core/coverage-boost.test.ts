@@ -2,7 +2,7 @@ import { describe, expect, it, beforeAll } from "vitest";
 import { isHashRow, numberedRead, withLineNumbers, clipLine, assertLineLimit, lineLimitMoreThanMessage, truncateToBytes, getCached, splitLines, visLines, isRec, normalizeFilePath } from "../../src/utils";
 import { parseHashRef } from "../../src/hashline/parse";
 import { initHasher, getH, xxh32, contentChecksum } from "../../src/hashline/hasher";
-import { isValidHashList, isValidServedMap, parseHashList, parseServedMap, parseStoredHashes, parseStoredServed, isValidSnapshot, isCorruptionError, isBusyError } from "../../src/hash-store/validation";
+import { isValidHashList, parseHashList, parseStoredHashes, isValidSnapshot, isCorruptionError, isBusyError } from "../../src/hash-store/validation";
 import { canon, hashSource } from "../../src/hashline/hash";
 import { toCwd } from "../../src/paths";
 import { withTempDir, withTempFile, setupIntegrationTest } from "../support/fixtures";
@@ -136,15 +136,6 @@ describe("coverage boost validation", () => {
     expect(isValidHashList([])).toBe(true);
     expect(isValidHashList([123 as unknown as string])).toBe(false);
   });
-  it("isValidServedMap", () => {
-    expect(isValidServedMap({ Hasu: "x" })).toBe(true);
-    expect(isValidServedMap({ Ha: "x" })).toBe(false);
-    expect(isValidServedMap({ Hasu: 123 as unknown as string })).toBe(false);
-    expect(isValidServedMap(null)).toBe(false);
-    expect(isValidServedMap([])).toBe(false);
-    expect(isValidServedMap({ "AB!": "x" })).toBe(false);
-    expect(isValidServedMap({})).toBe(true);
-  });
   it("parseHashList invalid json", () => {
     let called = false;
     expect(parseHashList("not json", () => { called = true; })).toBeUndefined();
@@ -165,27 +156,9 @@ describe("coverage boost validation", () => {
     expect(parseHashList(JSON.stringify(["Hasu", "Hasu"]), () => { called = true; })).toBeUndefined();
     expect(called).toBe(true);
   });
-  it("parseServedMap invalid json", () => {
-    let called = false;
-    expect(parseServedMap("not json", () => { called = true; })).toBeUndefined();
-    expect(called).toBe(true);
-  });
-  it("parseServedMap invalid map", () => {
-    let called = false;
-    expect(parseServedMap(JSON.stringify({ ab: "x" }), () => { called = true; })).toBeUndefined();
-    expect(called).toBe(true);
-  });
-  it("parseServedMap valid", () => {
-    let called = false;
-    const m = parseServedMap(JSON.stringify({ Hasu: "x", arvm: "y" }), () => { called = true; });
-    expect(m?.get("Hasu")).toBe("x");
-    expect(called).toBe(false);
-  });
-  it("parseStoredHashes and Served", () => {
+  it("parseStoredHashes", () => {
     expect(parseStoredHashes(undefined, () => {})).toBeUndefined();
-    expect(parseStoredServed(undefined, () => {})).toBeUndefined();
     expect(parseStoredHashes({ hashes: JSON.stringify(["Hasu"]) } as unknown as Record<string, unknown>, () => {})).toEqual(["Hasu"]);
-    expect(parseStoredServed({ hashes: JSON.stringify({ Hasu: "x" }) } as unknown as Record<string, unknown>, () => {})?.get("Hasu")).toBe("x");
   });
   it("isValidSnapshot", () => {
     expect(isValidSnapshot({ content: "a", hashes: ["Hasu"] })).toBe(true);

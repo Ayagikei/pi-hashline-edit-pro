@@ -17,8 +17,8 @@ import { abortIf, makePrepareArguments, numberedRead, visLines, splitLines } fro
 import { loadP, loadGuide } from "./prompts";
 import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { valAccess } from "./validation";
-import { markServed as markServedScoped, withAnchorSession } from "./anchor-registry";
-import { buildServedMap } from "./served";
+import { withAnchorSession } from "./anchor-registry";
+import { serveRows } from "./served";
 import { Text } from "@earendil-works/pi-tui";
 const R_DESC = loadP("../prompts/read.md");
 const R_SNIPPET = loadP("../prompts/read-snippet.md");
@@ -237,7 +237,7 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 					fileHashes,
 					resolvedPath,
 				);
-				markServedScoped(resolvedPath, buildServedMap(fileHashes, fileLines, preview.servedHashes), new Set(fileHashes));
+				serveRows(resolvedPath, fileHashes, fileLines, preview.servedHashes);
 				const snapshotId = await safeSnapId(absolutePath, "read");
 				const previewText =
 					hadUtf8DecodeErrors

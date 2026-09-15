@@ -3,7 +3,7 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
 import { shutdownHashStore } from "../../src/hash-store";
-import { makeTempDir, withHome } from "../support/fixtures";
+import { makeTempDir, withHome, makePiStub } from "../support/fixtures";
 
 async function cleanupCwd(cwd: string): Promise<void> {
   shutdownHashStore();
@@ -14,52 +14,12 @@ const restoreHome = withHome(process.env.HOME);
 
 afterAll(restoreHome);
 
-type ToolResultHandler = (
-  event: {
-    toolName: string;
-    toolCallId: string;
-    input: unknown;
-    content: Array<{ type: string; text?: string }>;
-    details: unknown;
-    isError: boolean;
-  },
-  ctx: {
-    cwd: string;
-    signal?: AbortSignal;
-  },
-) => Promise<
-  | {
-      content?: Array<{ type: string; text?: string }>;
-      details?: unknown;
-      isError?: boolean;
-    }
-  | undefined
-  | void
->;
-
 function createTestPi() {
-  let toolResultHandler: ToolResultHandler | undefined;
-  let sessionStartHandler: ((event: unknown, ctx: unknown) => Promise<unknown>) | undefined;
-  const pi = {
-    registerTool() {},
-    registerCommand() {},
-    getActiveTools: () => [],
-    setActiveTools() {},
-    on(event: string, handler: unknown) {
-      if (event === "tool_result") {
-        toolResultHandler = handler as ToolResultHandler;
-      } else if (event === "session_start") {
-        sessionStartHandler = handler as (event: unknown, ctx: unknown) => Promise<unknown>;
-      }
-    },
-  } as any;
-
+  const { pi, handlers } = makePiStub();
   register(pi);
-
   return {
-    pi,
-    getToolResultHandler: () => toolResultHandler,
-    getSessionStartHandler: () => sessionStartHandler,
+    getToolResultHandler: () => handlers.get("tool_result"),
+    getSessionStartHandler: () => handlers.get("session_start"),
   };
 }
 
@@ -305,12 +265,12 @@ describe("auto-read after write", () => {
       const lines = autoReadText.split("\n");
       const hashlinePattern = /^[A-Za-z0-9]{4}│/;
 
-      const headerIndex = lines.findIndex((l) =>
+      const headerIndex = lines.findIndex((l: string) =>
         l.includes("--- Auto-read (hashline anchors) ---"),
       );
       expect(headerIndex).toBeGreaterThanOrEqual(0);
 
-      const contentLines = lines.slice(headerIndex + 1).filter((l) => l.length > 0);
+      const contentLines = lines.slice(headerIndex + 1).filter((l: string) => l.length > 0);
       for (const line of contentLines) {
         expect(line).toMatch(hashlinePattern);
       }

@@ -3,16 +3,7 @@ import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { batchMemberFor, finalizeTurn, planAssistantMessage, resetBatchStateForTests } from "../../src/batch";
 import { lineHashes } from "../../src/hashline";
-import { setupIntegrationTest, withTempFile } from "../support/fixtures";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
+import { setupIntegrationTest, withTempFile, toolCall, assistantMessage } from "../support/fixtures";
 describe("planAssistantMessage", () => {
   it("ignores non-assistant messages", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {

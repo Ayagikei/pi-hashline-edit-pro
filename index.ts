@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
-import { initHasher } from "./src/hashline";
+import { initHasher, lineChecksum } from "./src/hashline";
 import { regReplace } from "./src/replace";
 import { regInsert } from "./src/insert";
 import { regGrep } from "./src/grep";
@@ -22,8 +22,8 @@ import {
   adjustDiffContextLines,
 } from "./src/config";
 import { loadHashStore, persistSnapshot, pruneMissing } from "./src/hash-store";
-import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, markServed as markServedScoped, sessionKeyFor, withAnchorSession, releaseRegistrySession } from "./src/anchor-registry";
-import { buildServedMap } from "./src/served";
+import { initRegistry, gcRegistrySidecars, clearRegistry, freeAnchors, sessionKeyFor, withAnchorSession, releaseRegistrySession } from "./src/anchor-registry";
+import { serveRows } from "./src/served";
 import { finalizeTurn, planAssistantMessage } from "./src/batch";
 import { currentEditFlags } from "./src/edit-common";
 import { HashlineConfigOverlay } from "./src/config-ui";
@@ -33,8 +33,6 @@ import { loadFileKindAndText } from "./src/file-kind";
 import { resolveInCwd } from "./src/fs-write";
 import { valAccess } from "./src/validation";
 import { splitLines } from "./src/utils";
-import { hashSource } from "./src/hashline";
-import { contentChecksum } from "./src/hashline/hasher";
 import { AUTO_READ_ALL_CUSTOM_TYPE } from "./src/constants";
 
 export default function (pi: ExtensionAPI): void {
@@ -212,8 +210,8 @@ export default function (pi: ExtensionAPI): void {
           DEFAULT_MAX_LINES,
         );
         const fileLines = splitLines(normalized);
-        persistSnapshot(await loadHashStore(), absolutePath, normalized, fileHashes, fileLines.map((line) => contentChecksum(hashSource(line))));
-        markServedScoped(absolutePath, buildServedMap(fileHashes, fileLines, preview.servedHashes), new Set(fileHashes));
+        persistSnapshot(await loadHashStore(), absolutePath, normalized, fileHashes, fileLines.map(lineChecksum));
+        serveRows(absolutePath, fileHashes, fileLines, preview.servedHashes);
         return {
           content: [
             ...(event.content ?? []),

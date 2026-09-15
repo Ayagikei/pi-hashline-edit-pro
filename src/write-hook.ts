@@ -19,10 +19,6 @@ export function findServedHashEcho(content: string, served: ReadonlyMap<string, 
   return searchEcho(splitLines(content), served);
 }
 
-export function findEditHashEcho(lines: string[], served: ReadonlyMap<string, string> | ReadonlySet<string>): { line: number; hash: string } | undefined {
-  return searchEcho(lines, served);
-}
-
 export async function servedHashEchoDenial(rawPath: string, content: string, cwd: string, signal?: AbortSignal): Promise<string | undefined> {
   abortIf(signal);
   const { resolved } = await resolveInCwd(rawPath, cwd);

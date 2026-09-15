@@ -90,6 +90,13 @@ export function hashSpan(hashes: string[], from: string, to: string): [number, n
   if (a < 0 || b < 0) return undefined;
   return [Math.min(a, b), Math.max(a, b)];
 }
+
+export function spanForEdit(originalHashes: string[], from: string, to: string, resultContent: string): DiffSpan | undefined {
+  const span = hashSpan(originalHashes, from, to);
+  if (!span) return undefined;
+  const replacementCount = splitLines(resultContent).length - (originalHashes.length - (span[1] - span[0] + 1));
+  return { start: span[0], end: span[1], replacementCount };
+}
 async function noteAnchorError(absolutePath: string, error: unknown, noPersist?: boolean): Promise<void> {
   if (noPersist === true) return;
   if (error instanceof RangeStaleError) {
@@ -179,9 +186,8 @@ export async function execPipeline(
   );
 
   const sortedFixes = dedupRowsFromFixes(anchorResult.autoFixes ?? []);
-  const pipeSpan = isNoop ? undefined : hashSpan(originalHashes, edit.hash_bounds[0].hash, edit.hash_bounds[1].hash);
-  const pipeResultCount = splitLines(result).length;
-  const pipeSpans = pipeSpan ? [{ start: pipeSpan[0], end: pipeSpan[1], replacementCount: pipeResultCount - (originalHashes.length - (pipeSpan[1] - pipeSpan[0] + 1)) }] : undefined;
+  const pipeSpan = isNoop ? undefined : spanForEdit(originalHashes, edit.hash_bounds[0].hash, edit.hash_bounds[1].hash, result);
+  const pipeSpans = pipeSpan ? [pipeSpan] : undefined;
   return {
     path: displayPath,
     originalNormalized,

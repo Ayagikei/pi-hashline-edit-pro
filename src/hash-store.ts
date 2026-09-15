@@ -7,22 +7,19 @@ import { initHasher, contentChecksum } from "./hashline/hasher";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT } from "./constants";
 import {
   isValidHashList,
-  isValidServedMap,
   parseStoredHashes,
-  parseStoredServed,
   isValidSnapshot,
   isCorruptionError,
   parseHashList,
-  parseServedMap,
 } from "./hash-store/validation";
 import {
   withBusyRetry,
   retriedWrite,
   withBusyRetryAsync,
 } from "./hash-store/retry";
-import { snapshotCache, cacheSnapshot, SNAPSHOT_CACHE_LIMIT, touchSession, clearSession, forgetSession } from "./hash-store/cache";
+import { snapshotCache, cacheSnapshot, SNAPSHOT_CACHE_LIMIT } from "./hash-store/cache";
 
-export { isValidHashList, isValidServedMap, parseHashList, parseServedMap, parseStoredHashes, parseStoredServed, isCorruptionError };
+export { isValidHashList, parseHashList, parseStoredHashes, isCorruptionError };
 export { SNAPSHOT_CACHE_LIMIT };
 export const STORE_NOT_OPEN_MESSAGE = "Hash store is not open; transactional update aborted";
 
@@ -367,23 +364,26 @@ export function shutdownHashStore(): void {
     cachedDb = null;
   }
   snapshotCache.clear();
-  clearSession();
+}
+
+function withTransaction(db: RawDb, fn: () => void): void {
+  withBusyRetry(() => {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      fn();
+      db.exec("COMMIT");
+    } catch (e) {
+      try { db.exec("ROLLBACK"); } catch {}
+      throw e;
+    }
+  });
 }
 
 export function withStore(fn: () => void): void {
   if (!cachedDb || !cachedDb.db.isOpen) {
     throw new Error(STORE_NOT_OPEN_MESSAGE);
   }
-  withBusyRetry(() => {
-    cachedDb!.db.exec("BEGIN IMMEDIATE");
-    try {
-      fn();
-      cachedDb!.db.exec("COMMIT");
-    } catch (e) {
-      try { cachedDb!.db.exec("ROLLBACK"); } catch {}
-      throw e;
-    }
-  });
+  withTransaction(cachedDb.db, fn);
 }
 
 async function migrateLegacy(db: RawDb): Promise<void> {
@@ -431,18 +431,11 @@ async function migrateLegacy(db: RawDb): Promise<void> {
     ]);
   }
   if (rows.length > 0) {
-    withBusyRetry(() => {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        const stmt = db.prepare(
-          "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, line_checksums, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
-        );
-        for (const row of rows) stmt.run(...row);
-        db.exec("COMMIT");
-      } catch (e) {
-        try { db.exec("ROLLBACK"); } catch {}
-        throw e;
-      }
+    withTransaction(db, () => {
+      const stmt = db.prepare(
+        "INSERT OR REPLACE INTO snapshots (path, checksum, line_count, hashes, line_checksums, updated_at) VALUES (?, ?, ?, ?, ?, ?)"
+      );
+      for (const row of rows) stmt.run(...row);
     });
   }
 
@@ -487,7 +480,6 @@ export function upsertSnapshot(
 ): void {
   store.stmts.upsert(path, checksum, lineCount, JSON.stringify(hashes), lineChecksums ? JSON.stringify(lineChecksums) : "", Date.now());
   cacheSnapshot(path, checksum, lineCount, hashes);
-  touchSession(path);
 }
 export function persistSnapshot(
   store: HashStore,
@@ -540,7 +532,6 @@ export function upsertUndo(store: HashStore, path: string, entry: UndoRecord): v
     typeof entry.mode === "number" ? entry.mode : null,
     Date.now(),
   );
-  touchSession(path);
 }
 
 export function getUndoEntry(store: HashStore, path: string): UndoRecord | undefined {
@@ -600,7 +591,6 @@ export async function pruneMissing(store: HashStore): Promise<string[]> {
     }
   });
   for (const path of missing) snapshotCache.delete(path);
-  for (const path of missing) forgetSession(path);
   return missing;
 }
 

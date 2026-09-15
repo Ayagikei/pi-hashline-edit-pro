@@ -103,7 +103,6 @@ function assertMappingInvariants(
   newHashes: string[],
 ): void {
   expect(new Set(newHashes).size).toBe(newHashes.length);
-  { const seen = new Map<string, number>(); for (const h of newHashes) seen.set(h, (seen.get(h) ?? 0) + 1); for (const [h, n] of seen) if (n > 1) console.log("DUP:", h, n, "idx", newHashes.indexOf(h), newHashes.lastIndexOf(h)); }
   const oldHashToLine = new Map<string, string>();
   for (let i = 0; i < oldHashes.length; i++) {
     oldHashToLine.set(oldHashes[i]!, oldLines[i]!);
@@ -131,7 +130,6 @@ function assertMappingInvariants(
       expect(preserved, `dbg old:${JSON.stringify(oldLines)} oldH:${JSON.stringify(oldHashes)} new:${JSON.stringify(newLines)} newH:${JSON.stringify(newHashes)} spans:${JSON.stringify(spans)}`).toHaveLength(newCount);
       const lost = entries.filter((entry) => !preserved.includes(entry));
       for (const entry of lost) {
-        console.log("LOST:", entry.hash, "line", entry.index + 1, "content", JSON.stringify(content), "inResult", newHashes.includes(entry.hash), "spans", JSON.stringify(spans));
         expect(content, `non-empty outside line ${entry.index + 1} lost its hash`).toBe("");
       }
     }

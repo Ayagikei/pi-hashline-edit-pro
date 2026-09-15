@@ -1,6 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm } from "fs/promises";
-import { join } from "path";
+import { describe, expect, it } from "vitest";
 import {
   toggleAutoRead,
   toggleAutoReadAll,
@@ -13,31 +11,19 @@ import {
   readConfigWithStatus,
   writeConfig,
 } from "../../src/config";
-import { getWritableTempRoot } from "../support/fixtures";
-let tmpHome: string;
+import { withTempDir } from "../support/fixtures";
 
-async function withTempHome(run: () => Promise<void>): Promise<void> {
-  tmpHome = await mkdtemp(join(await getWritableTempRoot(), "pi-hashline-config-test-"));
-  vi.stubEnv('HOME', tmpHome);
-  vi.stubEnv('XDG_CONFIG_HOME', "");
-  try {
-    await run();
-  } finally {
-    vi.unstubAllEnvs();
-    await rm(tmpHome, { recursive: true, force: true });
-  }
-}
 
 describe("config - toggleAutoRead", () => {
   it("toggles from default true to false", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleAutoRead()).toBe(false);
       expect((await readConfig()).autoRead).toBe(false);
     });
   });
 
   it("toggles from false back to true", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: false, anchorGrepEnabled: true });
       expect(await toggleAutoRead()).toBe(true);
       expect((await readConfig()).autoRead).toBe(true);
@@ -45,7 +31,7 @@ describe("config - toggleAutoRead", () => {
   });
 
   it("round-trips correctly through multiple toggles", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleAutoRead()).toBe(false);
       expect(await toggleAutoRead()).toBe(true);
       expect(await toggleAutoRead()).toBe(false);
@@ -56,14 +42,14 @@ describe("config - toggleAutoRead", () => {
 
 describe("config - toggleAnchorGrep", () => {
   it("toggles from default true to false", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleAnchorGrep()).toBe(false);
       expect((await readConfig()).anchorGrepEnabled).toBe(false);
     });
   });
 
   it("toggles from false back to true", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: false });
       expect(await toggleAnchorGrep()).toBe(true);
       expect((await readConfig()).anchorGrepEnabled).toBe(true);
@@ -71,7 +57,7 @@ describe("config - toggleAnchorGrep", () => {
   });
 
   it("round-trips correctly through multiple toggles", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleAnchorGrep()).toBe(false);
       expect(await toggleAnchorGrep()).toBe(true);
       expect(await toggleAnchorGrep()).toBe(false);
@@ -80,7 +66,7 @@ describe("config - toggleAnchorGrep", () => {
   });
 
   it("toggleAutoRead preserves anchorGrepEnabled", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: false });
       await toggleAutoRead();
       const config = await readConfig();
@@ -92,20 +78,20 @@ describe("config - toggleAnchorGrep", () => {
 
 describe("config - toggleAutoReadAll", () => {
   it("defaults to off", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect((await readConfig()).autoReadAll).toBe(false);
     });
   });
 
   it("toggles from default false to true", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleAutoReadAll()).toBe(true);
       expect((await readConfig()).autoReadAll).toBe(true);
     });
   });
 
   it("toggles from true back to false", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, autoReadAll: true });
       expect(await toggleAutoReadAll()).toBe(false);
       expect((await readConfig()).autoReadAll).toBe(false);
@@ -115,14 +101,14 @@ describe("config - toggleAutoReadAll", () => {
 
 describe("config - toggleRequirePath", () => {
   it("toggles from default false to true", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleRequirePath()).toBe(true);
       expect((await readConfig()).requirePath).toBe(true);
     });
   });
 
   it("toggles from true back to false", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, requirePath: true });
       expect(await toggleRequirePath()).toBe(false);
       expect((await readConfig()).requirePath).toBe(false);
@@ -132,14 +118,14 @@ describe("config - toggleRequirePath", () => {
 
 describe("config - toggleStrictInput", () => {
   it("toggles from default false to true", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await toggleStrictInput()).toBe(true);
       expect((await readConfig()).strictInput).toBe(true);
     });
   });
 
   it("toggles from true back to false", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, strictInput: true });
       expect(await toggleStrictInput()).toBe(false);
       expect((await readConfig()).strictInput).toBe(false);
@@ -149,14 +135,14 @@ describe("config - toggleStrictInput", () => {
 
 describe("config - cycleBoundaryDedupMode", () => {
   it("cycles on to strict", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await cycleBoundaryDedupMode()).toBe("strict");
       expect((await readConfig()).boundaryDedupMode).toBe("strict");
     });
   });
 
   it("cycles strict to off to on", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, boundaryDedupMode: "strict" });
       expect(await cycleBoundaryDedupMode()).toBe("off");
       expect(await cycleBoundaryDedupMode()).toBe("on");
@@ -165,10 +151,10 @@ describe("config - cycleBoundaryDedupMode", () => {
   });
 
   it("migrates legacy boolean config values", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(
         pathJoin(configDir, "config.json"),
@@ -186,7 +172,7 @@ describe("config - cycleBoundaryDedupMode", () => {
 
 describe("config - readConfig / writeConfig", () => {
   it("writeConfig persists autoRead", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true });
       const config = await readConfig();
       expect(config.autoRead).toBe(true);
@@ -194,10 +180,10 @@ describe("config - readConfig / writeConfig", () => {
   });
 
   it("ignores unknown config fields on read", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(
         pathJoin(configDir, "config.json"),
@@ -211,10 +197,11 @@ describe("config - readConfig / writeConfig", () => {
 
 describe("config - atomic writes", () => {
   it("leaves no temp files behind after writeConfig", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true });
       const { readdir } = await import("fs/promises");
-      const entries = await readdir(join(tmpHome, ".config", "pi-hashline-edit-pro"));
+      const { join: pathJoin } = await import("path");
+      const entries = await readdir(pathJoin(dir, ".config", "pi-hashline-edit-pro"));
       expect(entries).toEqual(["config.json"]);
     });
   });
@@ -222,29 +209,29 @@ describe("config - atomic writes", () => {
 
 describe("config - readConfig defaults", () => {
   it("defaults to true when no config file exists", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect((await readConfig()).autoRead).toBe(true);
     });
   });
 
   it("reads autoRead from the config file", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: false, anchorGrepEnabled: true });
       expect((await readConfig()).autoRead).toBe(false);
     });
   });
 
   it("defaults anchorGrepEnabled to true when no config file exists", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect((await readConfig()).anchorGrepEnabled).toBe(true);
     });
   });
 
   it("defaults anchorGrepEnabled to true when absent from an existing config file", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(pathJoin(configDir, "config.json"), JSON.stringify({ autoRead: false }));
       const config = await readConfig();
@@ -254,7 +241,7 @@ describe("config - readConfig defaults", () => {
   });
 
   it("reads anchorGrepEnabled from the config file", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: false });
       expect((await readConfig()).anchorGrepEnabled).toBe(false);
     });
@@ -263,10 +250,10 @@ describe("config - readConfig defaults", () => {
 
 describe("config - wrong-shape config", () => {
   it("falls back to defaults when config.json is not an object", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(pathJoin(configDir, "config.json"), JSON.stringify([1, 2]));
       const { config, corrupted } = await readConfigWithStatus();
@@ -276,10 +263,10 @@ describe("config - wrong-shape config", () => {
   });
 
   it("falls back to defaults when autoRead is not a boolean", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(pathJoin(configDir, "config.json"), JSON.stringify({ autoRead: "yes" }));
       const { config, corrupted } = await readConfigWithStatus();
@@ -289,10 +276,10 @@ describe("config - wrong-shape config", () => {
   });
 
   it("uses the default when autoRead is omitted", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
       const { writeFile, mkdir } = await import("fs/promises");
       const { join: pathJoin } = await import("path");
-      const configDir = pathJoin(tmpHome, ".config", "pi-hashline-edit-pro");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(pathJoin(configDir, "config.json"), JSON.stringify({ requirePath: true }));
       const { config, corrupted } = await readConfigWithStatus();
@@ -305,20 +292,20 @@ describe("config - wrong-shape config", () => {
 
 describe("config - diffContextLines", () => {
   it("defaults to 1 when no config file exists", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect((await readConfig()).diffContextLines).toBe(1);
     });
   });
 
   it("reads a stored value", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, diffContextLines: 3 });
       expect((await readConfig()).diffContextLines).toBe(3);
     });
   });
 
   it("clamps out-of-range and non-numeric values", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, diffContextLines: 99 });
       expect((await readConfig()).diffContextLines).toBe(10);
       await writeConfig({ autoRead: true, anchorGrepEnabled: true, diffContextLines: -4 });
@@ -331,7 +318,7 @@ describe("config - diffContextLines", () => {
   });
 
   it("adjusts up and down within bounds", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-config-test-", async () => {
       expect(await adjustDiffContextLines(1)).toBe(2);
       expect(await adjustDiffContextLines(-1)).toBe(1);
       expect(await adjustDiffContextLines(-5)).toBe(0);

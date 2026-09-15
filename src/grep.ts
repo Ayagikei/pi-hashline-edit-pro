@@ -12,8 +12,8 @@ import { toCwd } from "./paths";
 import { loadP, loadGuide } from "./prompts";
 import { normReq } from "./payload-contract";
 import { abortIf, errCode, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
-import { markServed as markServedScoped, withAnchorSession } from "./anchor-registry";
-import { buildServedMap } from "./served";
+import { withAnchorSession } from "./anchor-registry";
+import { serveRows } from "./served";
 import { Text } from "@earendil-works/pi-tui";
 import { expandHint, getResultText, reuseText, type CallT, type FgT } from "./replace-render";
 const GREP_KS = new Set(["pattern", "path", "glob", "context", "ignoreCase", "literal", "limit"]);
@@ -281,9 +281,6 @@ function makeHitFromIndices(
 }
 
 let cachedRgPath: string | undefined;
-export function clearRgPathCache(): void {
-  cachedRgPath = undefined;
-}
 
 export async function resolveRgPath(): Promise<string> {
   if (cachedRgPath !== undefined) return cachedRgPath;
@@ -674,7 +671,7 @@ export function regGrep(pi: ExtensionAPI): void {
         }
         hits.sort((a, b) => cmp(a.displayPath, b.displayPath));
         for (const hit of hits) {
-          markServedScoped(hit.path, buildServedMap(hit.fileHashes, hit.fileLines, hit.hashes), new Set(hit.fileHashes));
+          serveRows(hit.path, hit.fileHashes, hit.fileLines, hit.hashes);
         }
         const blocks = hits
           .map((hit) => `=== ${hit.displayPath} ===\n${hit.rows.join("\n")}`)

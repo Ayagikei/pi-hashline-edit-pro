@@ -12,6 +12,7 @@ import {
   useTestHome,
   getText,
   extractHash,
+  makePiStub,
 } from "../support/fixtures";
 import register from "../../index";
 
@@ -824,29 +825,11 @@ describe("undo_last_change", () => {
   });
 });
 
-function makePiWithToolResultCapture() {
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const tools = new Map<string, any>();
-  const pi = {
-    registerTool(tool: any) {
-      tools.set(tool.name, tool);
-    },
-    registerCommand() {},
-    on(event: string, handler: (...args: unknown[]) => unknown) {
-      handlers.set(event, handler);
-    },
-    getActiveTools() {
-      return [];
-    },
-    setActiveTools() {},
-  } as any;
-  return { pi, handlers, tools };
-}
 
 describe("undo cleared after write", () => {
   it("a successful write clears the undo history for that path", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd }) => {
-      const { pi, handlers, tools } = makePiWithToolResultCapture();
+      const { pi, handlers, tools } = makePiStub();
       register(pi);
       const editTool = tools.get("replace")!;
       const undo = tools.get("undo_last_change")!;
@@ -872,7 +855,7 @@ describe("undo cleared after write", () => {
 
   it("a failed write keeps the undo history", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd }) => {
-      const { pi, handlers, tools } = makePiWithToolResultCapture();
+      const { pi, handlers, tools } = makePiStub();
       register(pi);
       const editTool = tools.get("replace")!;
       const undo = tools.get("undo_last_change")!;

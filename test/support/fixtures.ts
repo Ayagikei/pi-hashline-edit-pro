@@ -216,7 +216,48 @@ export function getText(result: { content: Array<{ text?: string }> }): string {
 }
 export function extractHash(line: string): string {
   const m = line.match(/([A-Za-z0-9]{4})│/);
-  return m ? m[1]! : line.split("│")[0]!
+  return m ? m[1]! : line.split("│")[0]!;
+}
+
+export function anchorFor(text: string, needle: string): string {
+  return extractHash(text.split("\n").find((line) => line.includes(`│${needle}`))!);
+}
+
+export function toolCall(id: string, name: string, args: unknown) {
+  return { type: "toolCall", id, name, arguments: args };
+}
+
+export function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
+  return { role: "assistant", content: calls };
+}
+
+export function makePiStub(initialTools: string[] = []) {
+  const handlers = new Map<string, (event: any, ctx: any) => any>();
+  const commands = new Map<string, { description: string; handler: (...args: any[]) => any }>();
+  const tools = new Map<string, any>();
+  const notify = vi.fn();
+  let active = [...initialTools];
+  const pi = {
+    registerTool(tool: any) {
+      tools.set(tool.name, tool);
+    },
+    registerCommand(name: string, def: { description: string; handler: (...args: any[]) => any }) {
+      commands.set(name, def);
+    },
+    on(event: string, handler: (event: any, ctx: any) => any) {
+      handlers.set(event, handler);
+    },
+    getActiveTools: () => [...active],
+    setActiveTools(names: string[]) {
+      active = [...names];
+    },
+  } as any;
+  const getTool = (name: string) => {
+    const tool = tools.get(name);
+    if (!tool) throw new Error(`Tool not registered: ${name}`);
+    return tool;
+  };
+  return { pi, handlers, commands, tools, notify, getTool, getActive: () => [...active] };
 }
 export function expectedEditContent(
   lines: string[],

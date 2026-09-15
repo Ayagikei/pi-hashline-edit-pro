@@ -5,20 +5,7 @@ import { Value } from "typebox/value";
 import register from "../../index";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
-import { makeFakePiRegistry, withTempDir, withTempFile } from "../support/fixtures";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
-function anchorFor(readText: string, needle: string): string {
-  return readText.split("\n").find((line) => line.includes(`│${needle}`))!.split("│")[0]!;
-}
-
+import { makeFakePiRegistry, withTempDir, withTempFile, toolCall, assistantMessage, anchorFor } from "../support/fixtures";
 function withHostCoercion(schema: unknown, args: Record<string, unknown>): Record<string, unknown> {
   const coerced = structuredClone(args);
   Value.Convert(schema as never, coerced);

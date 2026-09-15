@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeAll } from "vitest";
-import { chmod, mkdtemp, mkdir, rm, writeFile, stat, readdir } from "fs/promises";
+import { chmod, mkdir, writeFile, stat, readdir } from "fs/promises";
 import { existsSync, statSync } from "node:fs";
 import { join } from "path";
 import { DatabaseSync } from "node:sqlite";
@@ -20,16 +20,15 @@ import {
 import { HASH_STORE_VERSION } from "../../src/constants";
 import { initHasher, contentChecksum } from "../../src/hashline/hasher";
 import { splitLines } from "../../src/utils";
-import { getWritableTempRoot } from "../support/fixtures";
+import { withTempDir } from "../support/fixtures";
 
-let tmpHome: string;
 beforeAll(async () => {
   await initHasher();
 });
 
 describe("hash-store - undo entries", () => {
   it("round-trips an undo entry", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       upsertUndo(store, "/a.ts", {
         content: "old",
@@ -50,14 +49,14 @@ describe("hash-store - undo entries", () => {
   });
 
   it("returns undefined for a path with no undo entry", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       expect(getUndoEntry(store, "/missing.ts")).toBeUndefined();
     });
   });
 
   it("overwrites the previous entry for the same path", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       upsertUndo(store, "/a.ts", {
         content: "first",
@@ -81,7 +80,7 @@ describe("hash-store - undo entries", () => {
   });
 
   it("deletes an undo entry", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       upsertUndo(store, "/a.ts", {
         content: "old",
@@ -96,7 +95,7 @@ describe("hash-store - undo entries", () => {
   });
 
   it("treats a row with unparseable hashes as a miss", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       upsertUndo(store, "/a.ts", {
         content: "old",
@@ -117,7 +116,7 @@ describe("hash-store - undo entries", () => {
   });
 
   it("treats a row with malformed hash strings as a miss", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       upsertUndo(store, "/a.ts", {
         content: "old",
@@ -138,18 +137,6 @@ describe("hash-store - undo entries", () => {
   });
 });
 
-async function withTempHome(run: (home: string) => Promise<void>): Promise<void> {
-  tmpHome = await mkdtemp(join(await getWritableTempRoot(), "pi-hashline-hashstore-test-"));
-  vi.stubEnv("HOME", tmpHome);
-  vi.stubEnv("XDG_CONFIG_HOME", "");
-  try {
-    await run(tmpHome);
-  } finally {
-    shutdownHashStore();
-    vi.unstubAllEnvs();
-    await rm(tmpHome, { recursive: true, force: true });
-  }
-}
 
 function configHome(home: string): string {
   return join(home, ".config", "pi-hashline-edit-pro");
@@ -178,7 +165,7 @@ async function writeLegacyStore(home: string, snapshots: unknown): Promise<void>
 
 describe("hash-store - loadHashStore", () => {
   it("opens a fresh sqlite database when none exists", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       expect(existsSync(sqlitePath(home))).toBe(true);
       expect(getSnapshot(store, "/none.ts", "x\n")).toBeUndefined();
@@ -186,15 +173,15 @@ describe("hash-store - loadHashStore", () => {
   });
 
   it("creates the config directory", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async (dir) => {
       await loadHashStore();
-      const s = await stat(configHome(tmpHome));
+      const s = await stat(configHome(dir));
       expect(s.isDirectory()).toBe(true);
     });
   });
 
   it.skipIf(process.platform === "win32")("restricts existing state files to the owner", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const dir = configHome(home);
       const dbPath = sqlitePath(home);
       await mkdir(dir, { recursive: true, mode: 0o777 });
@@ -219,7 +206,7 @@ describe("hash-store - loadHashStore", () => {
   });
 
   it("selects the runtime's native SQLite engine", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const isBun = typeof (process.versions as Record<string, string | undefined>).bun === "string";
       expect(store.engine).toBe(isBun ? "bun:sqlite" : "node:sqlite");
@@ -229,7 +216,7 @@ describe("hash-store - loadHashStore", () => {
 
 describe("hash-store - snapshot get / upsert / delete", () => {
   it("round-trips a snapshot by path and content matching checksum", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const content = "hello\nworld\n";
       const hashes = ["ATIm", "Emno"];
@@ -240,7 +227,7 @@ describe("hash-store - snapshot get / upsert / delete", () => {
   });
 
   it("returns undefined when content changed (checksum mismatch)", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "aaa\nbbb\n", ["ATIm", "Emno"]);
 
@@ -250,7 +237,7 @@ describe("hash-store - snapshot get / upsert / delete", () => {
   });
 
   it("overwrites an existing path with new content+hashes", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "old\n", ["OPQ"]);
       await put(store, "/p.ts", "new\n", ["NOP"]);
@@ -261,7 +248,7 @@ describe("hash-store - snapshot get / upsert / delete", () => {
   });
 
   it("keeps unrelated snapshots intact when upserting another path", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const aContent = "a\nb\nc\nd\ne\n".repeat(50);
       const aHashes = aContent.split("\n").map((_, i) => i.toString(16).padStart(3, "0"));
@@ -282,7 +269,7 @@ describe("hash-store - corrupt row handling", () => {
   }
 
   it("treats a row with unparseable hashes as a cache miss", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["ATIm"]);
       await corruptHashes(home, "/p.ts", "not json");
@@ -295,7 +282,7 @@ describe("hash-store - corrupt row handling", () => {
   });
 
   it("treats a row with non-string hashes as a cache miss", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["ATIm"]);
       await corruptHashes(home, "/p.ts", "[1,2]");
@@ -306,7 +293,7 @@ describe("hash-store - corrupt row handling", () => {
   });
 
   it("treats a row with malformed hash strings as a cache miss and deletes it", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["ATIm"]);
       await corruptHashes(home, "/p.ts", '["ZZ", "ZZZZ", "a!b"]');
@@ -323,7 +310,7 @@ describe("hash-store - corrupt row handling", () => {
 
 describe("hash-store - migration from legacy hash-store.json", () => {
   it("imports valid legacy snapshots and renames the file to .bak", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, {
         "/valid.ts": { content: "ok\n", hashes: ["Ifms"] },
         "/also.ts": { content: "good\nmore\n", hashes: ["HDtm", "MEyo"] },
@@ -347,7 +334,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("drops structurally invalid legacy entries, keeps valid ones", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, {
         "/valid.ts": { content: "ok\n", hashes: ["Ifms"] },
         "/missing-hashes.ts": { content: "x\n" },
@@ -369,7 +356,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("skips legacy snapshots with duplicate hashes so they re-hash on next read", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, {
         "/dup.ts": { content: "a\nb\n", hashes: ["ATIm", "ATIm"] },
         "/valid.ts": { content: "ok\n", hashes: ["Ifms"] },
@@ -385,7 +372,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   it("warns when skipping a legacy snapshot with duplicate hashes", async () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      await withTempHome(async (home) => {
+      await withTempDir("pi-hashline-hashstore-test-", async (home) => {
         await writeLegacyStore(home, {
           "/dup.ts": { content: "a\nb\n", hashes: ["ATIm", "ATIm"] },
           "/valid.ts": { content: "ok\n", hashes: ["Ifms"] },
@@ -405,7 +392,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("skips legacy snapshots with malformed hashes so they re-hash on next read", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, {
         "/bad.ts": { content: "x\n", hashes: ["Ha", "Hasu"] },
         "/valid.ts": { content: "ok\n", hashes: ["Ifms"] },
@@ -419,7 +406,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("ignores a legacy snapshots field that is an array", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, ["not-an-object"]);
 
       const store = await loadHashStore();
@@ -429,7 +416,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("does not run migration when no legacy file exists", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       expect(store.stmts.allPaths()).toEqual([]);
       expect(existsSync(`${legacyPath(home)}.bak`)).toBe(false);
@@ -437,7 +424,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
   });
 
   it("migrates only once even if legacy file reappears", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await writeLegacyStore(home, {
         "/one.ts": { content: "1\n", hashes: ["ATIm"] },
       });
@@ -459,7 +446,7 @@ describe("hash-store - migration from legacy hash-store.json", () => {
 
 describe("hash-store - pruneMissing", () => {
   it("removes snapshots for files that no longer exist", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       await put(store, "/gone.ts", "old\n", ["PyBY"]);
       await pruneMissing(store);
@@ -468,7 +455,7 @@ describe("hash-store - pruneMissing", () => {
   });
 
   it("keeps undo entries for files that no longer exist", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       upsertUndo(store, "/gone.ts", {
         content: "old",
@@ -483,7 +470,7 @@ describe("hash-store - pruneMissing", () => {
   });
 
   it("keeps undo entries for files that still exist", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const existing = join(home, "keep.ts");
       await writeFile(existing, "keep\n", "utf-8");
 
@@ -501,7 +488,7 @@ describe("hash-store - pruneMissing", () => {
   });
 
   it("keeps snapshots for files that still exist", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const existing = join(home, "keep.ts");
       await writeFile(existing, "keep\n", "utf-8");
 
@@ -516,7 +503,7 @@ describe("hash-store - pruneMissing", () => {
   });
 
   it("prunes against live rows, not a stale snapshot", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const keep = join(home, "keep.ts");
       const grown = join(home, "grow.ts");
       await writeFile(keep, "keep\n", "utf-8");
@@ -535,7 +522,7 @@ describe("hash-store - pruneMissing", () => {
   });
 
   it("prunes across multiple stat batches", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       const existing: { path: string; hash: string }[] = [];
       for (let i = 0; i < 70; i++) {
@@ -561,7 +548,7 @@ describe("hash-store - pruneMissing", () => {
 
 describe("hash-store - concurrency (issue #10)", () => {
   it("preserves snapshots written by a separately-opened connection", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/a.ts", "alpha\n", ["TrTV"]);
 
@@ -581,7 +568,7 @@ describe("hash-store - concurrency (issue #10)", () => {
   });
 
   it("a fresh reopen sees snapshots written by a prior session", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const a = await loadHashStore();
       await put(a, "/first.ts", "one\n", ["agWh"]);
       shutdownHashStore();
@@ -599,7 +586,7 @@ describe("hash-store - concurrency (issue #10)", () => {
 
 describe("hash-store - incremental writes (issue #8)", () => {
   it("upserting a new path does not alter an existing path's stored hashes", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const bigContent = "x\n".repeat(2000);
       const bigHashes = bigContent.split("\n").map((_, i) => i.toString(16).padStart(3, "0"));
@@ -620,7 +607,7 @@ function walTruncated(walPath: string): boolean {
 
 describe("hash-store - WAL checkpoint on shutdown", () => {
   it("truncates the WAL file after shutdownHashStore", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["HDtm"]);
 
@@ -636,7 +623,7 @@ describe("hash-store - WAL checkpoint on shutdown", () => {
 
 describe("hash-store - corrupt database recovery", () => {
   it("rebuilds the store when the database file is corrupt", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await mkdir(configHome(home), { recursive: true });
       await writeFile(sqlitePath(home), "this is not a sqlite database", "utf-8");
 
@@ -649,7 +636,7 @@ describe("hash-store - corrupt database recovery", () => {
   });
 
   it("quarantines the corrupt file instead of deleting it", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       await mkdir(configHome(home), { recursive: true });
       await writeFile(sqlitePath(home), "garbage bytes", "utf-8");
 
@@ -662,7 +649,7 @@ describe("hash-store - corrupt database recovery", () => {
   });
 
   it("keeps working when the store is healthy", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       upsertSnapshot(store, "/p.ts", contentChecksum("b\n"), 1, ["BeSR"]);
       expect(getSnapshot(store, "/p.ts", "b\n")).toEqual(["BeSR"]);
@@ -674,7 +661,7 @@ describe("hash-store - corrupt database recovery", () => {
 
 describe("hash-store - schema versioning", () => {
   it("writes the current version on first open", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["HDtm"]);
       shutdownHashStore();
@@ -688,7 +675,7 @@ describe("hash-store - schema versioning", () => {
   });
 
   it("keeps snapshots when the stored version matches", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["HDtm"]);
       shutdownHashStore();
@@ -699,7 +686,7 @@ describe("hash-store - schema versioning", () => {
   });
 
   it("invalidates snapshots, undo, and served records when the stored version differs", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["HDtm"]);
       upsertUndo(store, "/u.ts", {
@@ -727,7 +714,7 @@ describe("hash-store - schema versioning", () => {
   });
 
   it("keeps snapshots from a pre-versioning database and writes the version", async () => {
-    await withTempHome(async (home) => {
+    await withTempDir("pi-hashline-hashstore-test-", async (home) => {
       const store = await loadHashStore();
       await put(store, "/p.ts", "x\n", ["HDtm"]);
       shutdownHashStore();
@@ -768,7 +755,7 @@ describe("hash-store - isValidHashList", () => {
 
 describe("hash-store - snapshot cache", () => {
   it("serves repeated reads from memory without touching the database", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const checksum = contentChecksum("a\nb\n");
       upsertSnapshot(store, "/cache-hit.ts", checksum, 2, ["ATIm", "BeSR"]);
@@ -781,7 +768,7 @@ describe("hash-store - snapshot cache", () => {
   });
 
   it("evicts least-recently-used entries beyond the cache limit", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       const store = await loadHashStore();
       const checksum = contentChecksum("x");
       for (let i = 0; i < SNAPSHOT_CACHE_LIMIT; i++) {
@@ -800,7 +787,7 @@ describe("hash-store - snapshot cache", () => {
   });
 
   it("returns an independent copy so caller mutation cannot poison the cache", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-hashstore-test-", async () => {
       let store = await loadHashStore();
       const checksum = contentChecksum("a\nb\n");
       upsertSnapshot(store, "/mutable.ts", checksum, 2, ["ATIm", "BeSR"]);

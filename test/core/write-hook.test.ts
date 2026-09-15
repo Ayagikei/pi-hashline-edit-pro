@@ -1,28 +1,15 @@
-import { describe, expect, it, vi, beforeAll } from "vitest";
+import { describe, expect, it, beforeAll } from "vitest";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { join } from "path";
 import { initHasher } from "../../src/hashline";
-import { findServedHashEcho, findEditHashEcho, servedHashEchoDenial, registerWriteHook } from "../../src/write-hook";
-import { shutdownHashStore } from "../../src/hash-store";
+import { findServedHashEcho, servedHashEchoDenial, registerWriteHook } from "../../src/write-hook";
 import { initRegistry, adoptAnchors } from "../../src/anchor-registry";
-import { getWritableTempRoot } from "../support/fixtures";
+import { getWritableTempRoot, withTempDir } from "../support/fixtures";
 
 beforeAll(async () => {
   await initHasher();
 });
 
-async function withTempHome(run: (home: string) => Promise<void>): Promise<void> {
-  const home = await mkdtemp(join(await getWritableTempRoot(), "pi-hashline-writehook-test-"));
-  vi.stubEnv("HOME", home);
-  vi.stubEnv("XDG_CONFIG_HOME", "");
-  try {
-    await run(home);
-  } finally {
-    shutdownHashStore();
-    vi.unstubAllEnvs();
-    await rm(home, { recursive: true, force: true });
-  }
-}
 
 describe("write-hook findServedHashEcho", () => {
   it("returns undefined when served set is empty", () => {
@@ -47,22 +34,9 @@ describe("write-hook findServedHashEcho", () => {
   });
 });
 
-describe("write-hook findEditHashEcho", () => {
-  it("returns undefined for empty served", () => {
-    expect(findEditHashEcho(["ATIm│hello"], new Set())).toBeUndefined();
-  });
-  it("returns matching entry from lines array", () => {
-    const served = new Set(["BeSR"]);
-    expect(findEditHashEcho(["zzz", "BeSR│hi", "ATIm│bye"], served)).toEqual({ line: 2, hash: "BeSR" });
-  });
-  it("returns undefined when no match", () => {
-    expect(findEditHashEcho(["ATIm│hello"], new Set(["xY9"]))).toBeUndefined();
-  });
-});
-
 describe("write-hook servedHashEchoDenial", () => {
   it("returns undefined when no served record exists", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-no-served-"));
       try {
         const result = await servedHashEchoDenial("test.txt", "ATIm│hello\n", dir);
@@ -73,7 +47,7 @@ describe("write-hook servedHashEchoDenial", () => {
     });
   });
   it("returns undefined when served exists but content has no echo", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-no-echo-"));
       try {
         const filePath = join(dir, "test.txt");
@@ -88,7 +62,7 @@ describe("write-hook servedHashEchoDenial", () => {
     });
   });
   it("returns denial string when content contains served hash", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-echo-"));
       try {
         const filePath = join(dir, "test.txt");
@@ -104,7 +78,7 @@ describe("write-hook servedHashEchoDenial", () => {
     });
   });
   it("throws when signal is aborted before resolve", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-abort-"));
       try {
         const controller = new AbortController();
@@ -116,7 +90,7 @@ describe("write-hook servedHashEchoDenial", () => {
     });
   });
   it("returns undefined when file has empty served set", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-empty-set-"));
       try {
         const filePath = join(dir, "empty.txt");
@@ -165,7 +139,7 @@ describe("write-hook registerWriteHook", () => {
     expect(await handler({ toolName: "write", input: null }, { cwd: "/tmp", signal: undefined })).toBeUndefined();
   });
   it("blocks write when echo is detected", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-block-"));
       try {
         const filePath = join(dir, "blocked.txt");
@@ -183,7 +157,7 @@ describe("write-hook registerWriteHook", () => {
     });
   });
   it("allows write when no echo", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-allow-"));
       try {
         const filePath = join(dir, "allowed.txt");
@@ -201,7 +175,7 @@ describe("write-hook registerWriteHook", () => {
     });
   });
   it("handles file_path alias", async () => {
-    await withTempHome(async () => {
+    await withTempDir("pi-hashline-writehook-test-", async () => {
       const dir = await mkdtemp(join(await getWritableTempRoot(), "writehook-alias-"));
       try {
         const filePath = join(dir, "alias.txt");

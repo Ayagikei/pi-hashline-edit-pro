@@ -8,8 +8,8 @@ import { contentChecksum } from "./hashline/hasher";
 import { ANCHOR_COUNT, anchorAt } from "./hashline/alphabet";
 import { HASH_PROBE_STRIDE } from "./hashline/hash";
 import { errCode, splitLines } from "./utils";
-import { hashSource } from "./hashline";
 import * as Diff from "diff";
+import { lineChecksum } from "./hashline";
 import { getAllocatedState, persistSnapshot, type HashStore } from "./hash-store";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX } from "./constants";
 
@@ -811,9 +811,9 @@ export async function allocateFileAnchors(
   const registry = current();
   const shadow = options?.shadow === true;
   const lines = splitLines(content);
-  const checksums = lines.map((line) => contentChecksum(hashSource(line)));
+  const checksums = lines.map(lineChecksum);
   if (options?.previous?.spans) {
-    const prevChecksums = splitLines(options.previous.content).map((line) => contentChecksum(hashSource(line)));
+    const prevChecksums = splitLines(options.previous.content).map(lineChecksum);
     const aligned = alignOwnershipWithSpans(path, options.previous.hashes, prevChecksums, checksums, options.previous.spans, { shadow });
     if (!shadow && registry) registry.allocatedChecksum.set(path, contentChecksum(content));
     if (!shadow && options.persist !== false) {
@@ -825,7 +825,7 @@ export async function allocateFileAnchors(
   let prevChecksums: string[] | undefined;
   if (options?.previous) {
     prevAnchors = options.previous.hashes;
-    prevChecksums = splitLines(options.previous.content).map((line) => contentChecksum(hashSource(line)));
+    prevChecksums = splitLines(options.previous.content).map(lineChecksum);
   } else {
     const previousState = getAllocatedState(store, path, !shadow);
     if (previousState && snapshotMatchesAllocation(registry, path, previousState.contentChecksum)) {

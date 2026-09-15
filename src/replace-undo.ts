@@ -4,10 +4,9 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { loadHashStore, persistSnapshot, upsertUndo, getUndoEntry, deleteUndo, type UndoRecord } from "./hash-store";
-import { servedHashesFromDiff, buildServedMap } from "./served";
-import { contentChecksum } from "./hashline/hasher";
-import { hashSource } from "./hashline";
-import { markServed as markServedScoped, freeAnchors, adoptAnchors, withAnchorSession } from "./anchor-registry";
+import { servedHashesFromDiff, serveRows } from "./served";
+import { lineChecksum } from "./hashline";
+import { freeAnchors, adoptAnchors, withAnchorSession } from "./anchor-registry";
 import { resolveInCwd, writeAtomic, type FileIdentity } from "./fs-write";
 import { toLF, stripBOM, restoreEndings, type LineEnding } from "./normalize";
 import { genDiff, genPatch, spansFromHashes } from "./replace-diff";
@@ -200,16 +199,17 @@ export function regUndo(pi: ExtensionAPI): void {
           try {
             const store = await loadHashStore();
             const undoLines = splitLines(undo.content);
-            persistSnapshot(store, mutationTargetPath, undo.content, undo.hashes, undoLines.map((line) => contentChecksum(hashSource(line))));
+            persistSnapshot(store, mutationTargetPath, undo.content, undo.hashes, undoLines.map(lineChecksum));
             freeAnchors(mutationTargetPath);
             adoptAnchors(
               mutationTargetPath,
-              new Map(undoLines.map((line, i) => [undo.hashes[i]!, contentChecksum(hashSource(line))])),
+              new Map(undoLines.map((line, i) => [undo.hashes[i]!, lineChecksum(line)])),
             );
-            markServedScoped(
+            serveRows(
               mutationTargetPath,
-              buildServedMap(undo.hashes, undoLines, servedHashesFromDiff(undoDiff)),
-              new Set(undo.hashes),
+              undo.hashes,
+              undoLines,
+              servedHashesFromDiff(undoDiff),
             );
           } catch (error) {
             console.error("Failed to restore hash store snapshot after undo:", error);

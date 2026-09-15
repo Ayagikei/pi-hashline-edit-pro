@@ -1,17 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { readFile } from "fs/promises";
-import { withTempFile, setupIntegrationTest, getText, extractHash } from "../support/fixtures";
-
-function hashFor(text: string, content: string): string {
-  return extractHash(text.split("\n").find((line) => line.includes(`│${content}`))!);
-}
+import { withTempFile, setupIntegrationTest, getText, anchorFor } from "../support/fixtures";
 
 describe("boundary dedup diagnostics", () => {
   it("reports stripped lines and does not re-insert them", async () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { ctx, readTool, editTool } = setupIntegrationTest(cwd);
       const text = getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx));
-      const ref = hashFor(text, "bbb");
+      const ref = anchorFor(text, "bbb");
 
       const result = await editTool.execute(
         "e1",
@@ -37,7 +33,7 @@ describe("boundary dedup diagnostics", () => {
     await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { ctx, readTool, editTool } = setupIntegrationTest(cwd);
       const text = getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx));
-      const ref = hashFor(text, "bbb");
+      const ref = anchorFor(text, "bbb");
 
       const result = await editTool.execute(
         "e1",

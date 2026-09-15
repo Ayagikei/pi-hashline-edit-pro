@@ -7,7 +7,7 @@ import { mkMdTheme, renderEditResult } from "../../src/replace-render";
 import { fmtDedupRow, withDedupRows, isDedupRow, isChangeRow } from "../../src/replace-response";
 import { assertReq, assertInsertReq, getPreviewInput } from "../../src/payload-contract";
 import { decodeStringArray, cntDiff } from "../../src/utils";
-import { parseHashList, parseServedMap } from "../../src/hash-store/validation";
+import { parseHashList } from "../../src/hash-store/validation";
 import { tryReadNormFile } from "../../src/file-reader";
 import { commitEdit } from "../../src/commit";
 import { insertPreview } from "../../src/insert";
@@ -157,9 +157,6 @@ describe("gap validation with context", () => {
     called = false;
     expect(parseHashList(JSON.stringify(["ZZ"]), () => { called = true; }, "ctx")).toBeUndefined();
     expect(called).toBe(true);
-    called = false;
-    expect(parseServedMap("not json", () => { called = true; }, "ctx")).toBeUndefined();
-    expect(called).toBe(true);
   });
   it("covers stringify fallback via mock", () => {
     const payload = JSON.stringify("ZZ");
@@ -168,12 +165,6 @@ describe("gap validation with context", () => {
     expect(parseHashList(payload, () => { called = true; })).toBeUndefined();
     expect(called).toBe(true);
     spy.mockRestore();
-    const payload2 = JSON.stringify({ bad: "x" });
-    const spy2 = vi.spyOn(JSON, "stringify").mockImplementationOnce(() => { throw new Error("boom"); });
-    let called2 = false;
-    expect(parseServedMap(payload2, () => { called2 = true; })).toBeUndefined();
-    expect(called2).toBe(true);
-    spy2.mockRestore();
   });
 });
 

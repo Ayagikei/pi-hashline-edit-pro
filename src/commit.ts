@@ -8,11 +8,10 @@ import { saveUndo } from "./replace-undo";
 import { getDiffContextLines } from "./config";
 import { safeSnapId } from "./file-reader";
 import { writeAtomic } from "./fs-write";
-import { servedHashesFromDiff, buildServedMap } from "./served";
+import { servedHashesFromDiff, serveRows } from "./served";
 import { lineHashes, type AutoFix } from "./hashline";
-import { hashSpan } from "./replace";
+import { spanForEdit } from "./replace";
 import { restoreEndings, stripBOM, toLF } from "./normalize";
-import { markServed as markServedScoped } from "./anchor-registry";
 export interface CommitMeta {
   editAnchors?: [string, string];
   path: string;
@@ -131,18 +130,14 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     removedLines: pipe.totalRemovedLines,
   };
 
-  const span = meta.editAnchors ? hashSpan(pipe.originalHashes, meta.editAnchors[0], meta.editAnchors[1]) : undefined;
-  const resultCount = splitLines(pipe.result).length;
-  const replacementCount = span ? resultCount - (pipe.originalHashes.length - (span[1] - span[0] + 1)) : 0;
+  const span = meta.editAnchors ? spanForEdit(pipe.originalHashes, meta.editAnchors[0], meta.editAnchors[1], pipe.result) : undefined;
   let resultHashes: string[];
   try {
-    resultHashes = pipe.result === pipe.originalNormalized
-      ? pipe.originalHashes
-      : await lineHashes(pipe.result, mutationTargetPath, {
-        content: pipe.originalNormalized,
-        hashes: pipe.originalHashes,
-        spans: span ? [{ start: span[0], end: span[1], replacementCount }] : undefined,
-      });
+    resultHashes = await lineHashes(pipe.result, mutationTargetPath, {
+      content: pipe.originalNormalized,
+      hashes: pipe.originalHashes,
+      spans: span ? [span] : undefined,
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${detail} File was written; anchor finalization failed. One undo reverts. Call read for fresh anchors.`);
@@ -158,15 +153,11 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     editMeta,
     boundaryDedupAbove: pipe.boundaryDedupAbove,
     boundaryDedupBelow: pipe.boundaryDedupBelow,
-    ...(span ? { spans: [{ start: span[0], end: span[1], replacementCount }] } : {}),
+    ...(span ? { spans: [span] } : {}),
   };
   const changed = buildChanged(successInput, meta.verb, await getDiffContextLines());
   if (changed.details.diff) {
-    markServedScoped(
-      mutationTargetPath,
-      buildServedMap(resultHashes, splitLines(pipe.result), servedHashesFromDiff(changed.details.diff)),
-      new Set(resultHashes),
-    );
+    serveRows(mutationTargetPath, resultHashes, splitLines(pipe.result), servedHashesFromDiff(changed.details.diff));
   }
   return changed;
 }

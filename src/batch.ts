@@ -17,12 +17,12 @@ import {
   type PlannedEdit,
 } from "./hashline";
 import { boundaryDedupNoopWarning, boundaryDedupWarning, dedupRowsFromFixes } from "./commit";
-import { adoptAnchors, markServed, servedForPath } from "./anchor-registry";
+import { adoptAnchors, servedForPath } from "./anchor-registry";
 import { restoreEndings, stripBOM, toLF, type LineEnding } from "./normalize";
 import { assertInsertReq, assertReq, normReq } from "./payload-contract";
 import { saveUndo } from "./replace-undo";
 import { buildChanged, buildNoop, type RMetrics, type TResult } from "./replace-response";
-import { buildServedMap, servedHashesFromDiff } from "./served";
+import { serveRows, servedHashesFromDiff } from "./served";
 import { abortIf, assertLineLimit, errCode, isRec, splitLines } from "./utils";
 import { MAX_BYTES } from "./constants";
 
@@ -750,7 +750,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   changed.details.diff = `${header}\n${changed.details.diff}`;
   changed.details.diffLineNumbers?.unshift(undefined);
   try {
-    markServed(runtime.target, buildServedMap(resultHashes, splitLines(composed), servedHashesFromDiff(changed.details.diff)), new Set(resultHashes));
+    serveRows(runtime.target, resultHashes, splitLines(composed), servedHashesFromDiff(changed.details.diff));
   } catch (error) {
     console.error("Failed to mark batch diff served:", error);
   }

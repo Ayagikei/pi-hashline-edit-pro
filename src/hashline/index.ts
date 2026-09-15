@@ -12,6 +12,7 @@ export {
 	initHasher,
 	canon,
 	hashSource,
+	lineChecksum,
 } from "./hash";
 
 export {

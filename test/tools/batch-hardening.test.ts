@@ -8,20 +8,7 @@ import { resetBatchStateForTests, batchMemberFor } from "../../src/batch";
 import { planEdit } from "../../src/hashline";
 import { resEdit } from "../../src/hashline";
 import { lineHashes } from "../../src/hashline";
-import { makeFakePiRegistry, withTempFile, getText } from "../support/fixtures";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
-function anchorFor(readText: string, needle: string) {
-  return readText.split("\n").find((line) => line.split("│")[1] === needle)!.split("│")[0]!;
-}
-
+import { makeFakePiRegistry, withTempFile, getText, toolCall, assistantMessage, anchorFor } from "../support/fixtures";
 async function setupTools(cwd: string) {
   resetRegistryForTests();
   resetBatchStateForTests();

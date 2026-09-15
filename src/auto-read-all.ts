@@ -9,12 +9,11 @@ import {
   AUTO_READ_ALL_MIN_BUDGET_BYTES,
   SNIFF_BYTES,
 } from "./constants";
-import { markServed as markServedScoped } from "./anchor-registry";
+import { serveRows } from "./served";
 import { readNormFile } from "./file-reader";
 import { resolveRgPath } from "./grep";
 import { MAX_HASH_LINES } from "./hashline";
 import { fmtReadPreview } from "./read";
-import { buildServedMap } from "./served";
 import { splitLines } from "./utils";
 
 const EXEC_TIMEOUT_MS = 20_000;
@@ -248,7 +247,7 @@ async function renderFile(file: string, cwd: string): Promise<string | undefined
   try {
     const { normalized, fileHashes, absolutePath } = await readNormFile(file, cwd, { maxLines: MAX_HASH_LINES });
     const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES);
-    markServedScoped(absolutePath, buildServedMap(fileHashes, splitLines(normalized), preview.servedHashes), new Set(fileHashes));
+    serveRows(absolutePath, fileHashes, splitLines(normalized), preview.servedHashes);
     return `=== ${file} ===\n${preview.text}`;
   } catch (error) {
     console.error(`Auto-read all: skipped ${file}:`, error);
