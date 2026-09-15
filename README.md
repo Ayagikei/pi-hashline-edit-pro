@@ -254,6 +254,7 @@ Codes starting with `E_` are errors: nothing was written — except `File was wr
 | `[E_BATCH_OVERLAP]` | Batched `replace`/`insert` calls target overlapping ranges; the whole batch was refused. One `before` plus one `after` insert on the same anchor line is not an overlap. Retry with disjoint ranges. |
 | `[E_OP_ABORTED]` | An edit aborted (a same-message batch member failed, or the file changed or was deleted after the edit started). Nothing was written. Fix the sibling failure and retry the batch, otherwise call `read` for fresh anchors and retry. The abort names the failing call and its error code when one is known. |
 | `[E_UNSAFE_REGEX]` | A grep regex can trigger excessive backtracking; simplify it or search with `literal: true`. |
+| `[E_AUTO_READ_ALL]` | File already attached and unchanged; use attached anchors. |
 
 ## Troubleshooting
 

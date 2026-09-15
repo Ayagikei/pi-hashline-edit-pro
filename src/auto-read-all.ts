@@ -11,11 +11,12 @@ import {
 } from "./constants";
 import type { AutoReadAllMode } from "./config";
 import { serveRows } from "./served";
-import { readNormFile } from "./file-reader";
+import { readNormFile, safeSnapId } from "./file-reader";
 import { resolveRgPath } from "./grep";
 import { MAX_HASH_LINES } from "./hashline";
 import { fmtReadPreview } from "./read";
 import { splitLines } from "./utils";
+import { recordAutoReadAllComplete } from "./auto-read-all-state";
 
 const EXEC_TIMEOUT_MS = 20_000;
 const EXEC_MAX_BYTES = 64 * 1024 * 1024;
@@ -165,6 +166,7 @@ export interface AutoReadAllSection {
   file: string;
   text: string;
   totalLines: number;
+  absolutePath: string;
 }
 export interface AutoReadAllInjection {
   text: string;
@@ -362,7 +364,7 @@ async function renderFile(file: string, cwd: string): Promise<AutoReadAllSection
     const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, AUTO_READ_ALL_MAX_BUDGET_BYTES, MAX_HASH_LINES);
     serveRows(absolutePath, fileHashes, splitLines(normalized), preview.servedHashes);
     const totalLines = fileHashes.length;
-    return { file, text: `=== ${file} ===\n${preview.text}`, totalLines };
+    return { file, text: `=== ${file} ===\n${preview.text}`, totalLines, absolutePath };
   } catch (error) {
     console.error(`Auto-read all: skipped ${file}:`, error);
     return undefined;
@@ -406,6 +408,8 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
       continue;
     }
     sections.push(section);
+    const snapshotId = await safeSnapId(section.absolutePath, "auto-read-all");
+    if (snapshotId !== undefined) recordAutoReadAllComplete(section.absolutePath, snapshotId);
     bytes += sectionBytes;
     completeFiles += 1;
   }

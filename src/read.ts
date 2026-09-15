@@ -17,8 +17,11 @@ import { abortIf, makePrepareArguments, numberedRead, visLines, splitLines } fro
 import { loadP, loadGuide } from "./prompts";
 import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { valAccess } from "./validation";
-import { withAnchorSession } from "./anchor-registry";
+import { readConfig } from "./config";
+import { resolveTarget } from "./fs-write";
+import { withAnchorSession, servedForPath } from "./anchor-registry";
 import { serveRows } from "./served";
+import { getAutoReadAllSnapshot } from "./auto-read-all-state";
 import { Text } from "@earendil-works/pi-tui";
 const R_DESC = loadP("../prompts/read.md");
 const R_SNIPPET = loadP("../prompts/read-snippet.md");
@@ -210,6 +213,22 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 
 				abortIf(signal);
 				await valAccess(absolutePath, rawPath);
+                const autoReadAllMode = (await readConfig()).autoReadAll ?? "off";
+                if (autoReadAllMode !== "off") {
+                  const canonical = await resolveTarget(absolutePath).catch(() => undefined);
+                  if (canonical !== undefined) {
+                    const stored = getAutoReadAllSnapshot(canonical);
+                    if (stored !== undefined) {
+                      const current = await safeSnapId(canonical, "auto-read-all guard");
+                      if (current !== undefined && current === stored) {
+                        const served = servedForPath(canonical);
+                        if (served !== undefined && served.size > 0) {
+                          throw new Error(`[E_AUTO_READ_ALL] ${rawPath} already attached and unchanged; use attached anchors.`);
+                        }
+                      }
+                    }
+                  }
+                }
 
 				abortIf(signal);
 				const file = await loadFileKindAndText(absolutePath, { maxLines: MAX_HASH_LINES, displayPath: rawPath });
