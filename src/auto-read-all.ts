@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { lstat, open, readdir } from "node:fs/promises";
 import { join, relative, resolve, sep } from "node:path";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
+import { formatSize } from "@earendil-works/pi-coding-agent";
 import {
   AUTO_READ_ALL_MAX_BUDGET_BYTES,
   AUTO_READ_ALL_MAX_FILE_BYTES,
@@ -25,7 +25,7 @@ const MAX_REPORTED_OMISSIONS = 50;
 export const AUTO_READ_ALL_CHUNK_BYTES = 48 * 1024;
 
 const HEADER =
-  "[hashline auto-read-all] The content of every non-ignored project file is attached below with live hashline anchors. Each anchor│content row is already owned and served for this session, so replace and insert can target those anchors directly without calling read first. Sections marked [complete] are fully attached; do NOT call read for them. Only sections marked [truncated] need read. Rows with a truncation hint are only partially shown; call read with the hinted offset to see the rest.";
+  "[hashline auto-read-all] The content of every non-ignored project file is attached below with live hashline anchors. Each anchor│content row is already owned and served for this session, so edit [complete] files directly from the attachment with replace and insert, no read needed — anchors are already owned, re-read mints nothing and wastes tokens. NEVER call read for [complete] — it returns the same anchors. Sections marked [complete] are fully attached; only files listed as omitted in the footer need read.";
 
 const IMAGE_EXTENSIONS = new Set([
   ".avif",
@@ -363,12 +363,12 @@ export function chunkAutoReadAllSections(sections: string[], maxBytes: number = 
 async function renderFile(file: string, cwd: string): Promise<AutoReadAllSection | undefined> {
   try {
     const { normalized, fileHashes, absolutePath } = await readNormFile(file, cwd, { maxLines: MAX_HASH_LINES });
-    const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES);
+    const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, AUTO_READ_ALL_MAX_BUDGET_BYTES, MAX_HASH_LINES);
     serveRows(absolutePath, fileHashes, splitLines(normalized), preview.servedHashes);
     const totalLines = fileHashes.length;
     const shownLines = preview.servedHashes.length;
     const complete = preview.truncation === undefined && preview.nextOffset === undefined && shownLines >= totalLines;
-    const status = complete ? `[complete, ${totalLines} lines; do NOT re-read]` : `[truncated, showing ${shownLines} of ${totalLines} lines; use read with offset=${preview.nextOffset ?? shownLines + 1} to continue]`;
+    const status = complete ? `[complete, ${totalLines} lines; NEVER call read — it returns the same anchors]` : `[truncated, showing ${shownLines} of ${totalLines} lines; use read with offset=${preview.nextOffset ?? shownLines + 1} to continue]`;
     const nextOffset = preview.nextOffset;
     return { file, text: `=== ${file} ===\n${status}\n${preview.text}`, complete, totalLines, shownLines, ...(nextOffset !== undefined ? { nextOffset } : {}) };
   } catch (error) {
@@ -422,7 +422,7 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
   if (sections.length === 0) return undefined;
   const sectionTexts = sections.map((section) => section.text);
   const chunks = chunkAutoReadAllSections(sectionTexts);
-  const coverage = `[coverage: ${completeFiles} complete, ${truncatedFiles} truncated, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; do NOT re-read complete files]`;
+  const coverage = `[coverage: ${completeFiles} complete, ${truncatedFiles} truncated, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; NEVER call read for [complete] — it returns the same anchors]`;
   const text = `${HEADER}\n\n${coverage}\n\n${sectionTexts.join("\n\n")}\n\n${buildFooter(sections.length, discovery, omitted)}`;
   return { text, files: sections.length, bytes, omitted, chunks, completeFiles, truncatedFiles };
 }
