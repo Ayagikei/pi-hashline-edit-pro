@@ -43,9 +43,61 @@ const IMAGE_EXTENSIONS = new Set([
   ".webp",
 ]);
 
-export const AUTO_READ_ALL_EXCLUDED_NAMES = ["package-lock.json"];
-
+export const AUTO_READ_ALL_EXCLUDED_SEGMENTS = [
+  "vendor",
+  "node_modules",
+  "bower_components",
+  "third_party",
+  "thirdparty",
+  "jspm_packages",
+  ".venv",
+  "venv",
+  "site-packages",
+  "__pycache__",
+  ".tox",
+  ".gradle",
+  ".terraform",
+  "pods",
+  "carthage",
+  "deriveddata",
+];
+export const AUTO_READ_ALL_EXCLUDED_NAMES = [
+  "package-lock.json",
+  "yarn.lock",
+  "composer.lock",
+  "gemfile.lock",
+  "cargo.lock",
+  "poetry.lock",
+  "pipfile.lock",
+  "go.sum",
+  "flake.lock",
+  ".eslintcache",
+];
 const EXCLUDED_NAME_SET = new Set(AUTO_READ_ALL_EXCLUDED_NAMES);
+const EXCLUDED_SEGMENT_SET = new Set(AUTO_READ_ALL_EXCLUDED_SEGMENTS);
+function isExcludedBySegment(path: string): boolean {
+  for (const segment of path.split("/")) {
+    if (EXCLUDED_SEGMENT_SET.has(segment.toLowerCase())) return true;
+  }
+  return false;
+}
+function isExcludedByPattern(baseLower: string): boolean {
+  if (baseLower.endsWith(".min.js") || baseLower.endsWith(".min.css") || baseLower.endsWith(".min.mjs")) return true;
+  if (baseLower.endsWith("-min.js") || baseLower.endsWith("-min.css")) return true;
+  if (baseLower.includes(".bundle.") || baseLower.includes(".chunk.")) return true;
+  if (baseLower.endsWith(".umd.js")) return true;
+  if (baseLower.endsWith(".map")) return true;
+  if (baseLower.endsWith(".lock")) return true;
+  if (baseLower.includes(".generated.") || baseLower.includes(".gen.")) return true;
+  if (baseLower.endsWith("_pb2.py")) return true;
+  if (baseLower.endsWith(".pb.go")) return true;
+  if (baseLower.endsWith(".g.dart")) return true;
+  if (baseLower.endsWith(".freezed.dart")) return true;
+  if (baseLower.endsWith(".designer.cs")) return true;
+  if (baseLower.endsWith(".g.cs")) return true;
+  if (baseLower.endsWith(".snap")) return true;
+  return false;
+}
 
 const WALK_IGNORED_DIRS = new Set([
   ".git",
@@ -129,7 +181,7 @@ async function walkDir(dir: string, base: string, out: string[]): Promise<void> 
     if (entry.isSymbolicLink()) continue;
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (WALK_IGNORED_DIRS.has(entry.name)) continue;
+      if (WALK_IGNORED_DIRS.has(entry.name) || EXCLUDED_SEGMENT_SET.has(entry.name.toLowerCase())) continue;
       await walkDir(full, base, out);
     } else if (entry.isFile()) {
       out.push(toPosix(relative(base, full)));
@@ -202,7 +254,8 @@ export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMod
   const includable: string[] = [];
   let skippedByName = 0;
   for (const file of unique) {
-    if (EXCLUDED_NAME_SET.has(baseNameOf(file).toLowerCase())) skippedByName += 1;
+    const baseLower = baseNameOf(file).toLowerCase();
+    if (EXCLUDED_NAME_SET.has(baseLower) || isExcludedBySegment(file) || isExcludedByPattern(baseLower)) skippedByName += 1;
     else includable.push(file);
   }
   const scanWindow = includable.slice(0, AUTO_READ_ALL_MAX_FILES * SCAN_LIMIT_MULTIPLIER);
@@ -269,7 +322,7 @@ function buildFooter(attached: number, discovery: AutoReadAllDiscovery, omitted:
   if (discovery.skippedBinary > 0) notes.push(`${discovery.skippedBinary} binary or image file(s) skipped`);
   if (discovery.skippedLarge > 0) notes.push(`${discovery.skippedLarge} file(s) over ${formatSize(AUTO_READ_ALL_MAX_FILE_BYTES)} skipped`);
   if (discovery.skippedOther > 0) notes.push(`${discovery.skippedOther} unreadable path(s) skipped`);
-  if (discovery.skippedByName > 0) notes.push(`${discovery.skippedByName} file(s) skipped by name (${AUTO_READ_ALL_EXCLUDED_NAMES.join(", ")})`);
+  if (discovery.skippedByName > 0) notes.push(`${discovery.skippedByName} file(s) skipped by vendor/name/pattern rules`);
   const listed = omitted.slice(0, MAX_REPORTED_OMISSIONS).join(", ");
   const more = omitted.length > MAX_REPORTED_OMISSIONS ? `, ... (+${omitted.length - MAX_REPORTED_OMISSIONS} more)` : "";
   const omissionNote = omitted.length > 0 ? ` Not attached: ${listed}${more}. Use read for those.` : "";

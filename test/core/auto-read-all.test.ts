@@ -124,7 +124,47 @@ describe("discoverAutoReadAllFiles", () => {
       expect(injection!.text).toContain("=== keep.ts ===");
       expect(injection!.text).not.toContain("=== package-lock.json ===");
       expect(injection!.text).not.toContain("=== sub/package-lock.json ===");
-      expect(injection!.text).toContain("2 file(s) skipped by name (package-lock.json)");
+      expect(injection!.text).toContain("2 file(s) skipped by vendor/name/pattern rules");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("skips Tier 1 vendored segments case-insensitively", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-vendor-");
+    try {
+      initGitRepo(cwd);
+      const segments = ["vendor", "node_modules", "bower_components", "third_party", "thirdparty", "jspm_packages", ".venv", "venv", "site-packages", "__pycache__", ".tox", ".gradle", ".terraform", "Pods", "Carthage", "DerivedData"];
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+      await writeFile(join(cwd, "vendor_notes.txt"), "notes\n");
+      for (const segment of segments) {
+        await mkdir(join(cwd, segment), { recursive: true });
+        await writeFile(join(cwd, segment, "skipped.ts"), "export const a = 1;\n");
+      }
+      await mkdir(join(cwd, "Vendor"), { recursive: true });
+      await writeFile(join(cwd, "Vendor", "upper.ts"), "export const a = 1;\n");
+      const discovery = await discoverAutoReadAllFiles(cwd);
+      expect(discovery.files).toEqual(["keep.ts", "vendor_notes.txt"]);
+      expect(discovery.skippedByName).toBe(segments.length + 1);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("skips Tier 3 vendored and generated name patterns", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-patterns-");
+    try {
+      initGitRepo(cwd);
+      const skipped = ["app.min.js", "style.min.css", "lib.min.mjs", "app-min.js", "style-min.css", "vendor.bundle.js", "app.chunk.js", "lib.umd.js", "app.js.map", "custom.lock", "yarn.lock", "composer.lock", "Gemfile.lock", "Cargo.lock", "poetry.lock", "Pipfile.lock", "go.sum", "flake.lock", ".eslintcache", "foo.generated.js", "foo.gen.js", "foo_pb2.py", "foo.pb.go", "foo.g.dart", "foo.freezed.dart", "foo.designer.cs", "foo.g.cs", "foo.snap"];
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+      await writeFile(join(cwd, "bundle.js"), "export const a = 1;\n");
+      await writeFile(join(cwd, "generated.js"), "export const a = 1;\n");
+      for (const name of skipped) {
+        await writeFile(join(cwd, name), "export const a = 1;\n");
+      }
+      const discovery = await discoverAutoReadAllFiles(cwd);
+      expect(discovery.files).toEqual(["bundle.js", "generated.js", "keep.ts"]);
+      expect(discovery.skippedByName).toBe(skipped.length);
     } finally {
       await cleanupCwd(cwd);
     }
