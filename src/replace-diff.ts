@@ -211,6 +211,7 @@ function createRowEmitter(
   readonly truncated: boolean;
   emitPlain(line: string, num?: number): void;
   emitRow(prefix: " " | "+" | "-", line: string, hash: string | undefined, num?: number): void;
+  emitDedup(line: string): boolean;
 } {
   let outBytes = 0;
   let stopped = false;
@@ -245,11 +246,26 @@ function createRowEmitter(
     output.push(full);
     lineNumbers.push(num);
   };
+  const emitDedup = (line: string): boolean => {
+    if (stopped) return false;
+    const row = fmtDedupRow(line);
+    const rowBytes = Buffer.byteLength(row, "utf-8") + 1;
+    if (outBytes + rowBytes > maxBytes) {
+      stopped = true;
+      truncated = true;
+      return false;
+    }
+    outBytes += rowBytes;
+    output.push(row);
+    lineNumbers.push(undefined);
+    return true;
+  };
   return {
     get stopped() { return stopped; },
     get truncated() { return truncated; },
     emitPlain,
     emitRow,
+    emitDedup,
   };
 }
 
@@ -345,9 +361,7 @@ function genSpanDiff(
     if (firstChangedLine === undefined) firstChangedLine = span.newStart + 1;
     for (const dedup of span.dedupAbove ?? []) {
       if (em.stopped) break;
-      dedupEmitted = true;
-      output.push(fmtDedupRow(dedup));
-      lineNumbers.push(undefined);
+      if (em.emitDedup(dedup)) dedupEmitted = true;
     }
     for (let oldIdx = span.oldStart; oldIdx <= span.oldEnd && !em.stopped; oldIdx++) {
       em.emitRow("-", oldLines[oldIdx]!, oldHashes[oldIdx], oldIdx + 1);
@@ -357,9 +371,7 @@ function genSpanDiff(
     }
     for (const dedup of span.dedupBelow ?? []) {
       if (em.stopped) break;
-      dedupEmitted = true;
-      output.push(fmtDedupRow(dedup));
-      lineNumbers.push(undefined);
+      if (em.emitDedup(dedup)) dedupEmitted = true;
     }
     oldPos = span.oldEnd + 1;
     newPos = span.newEnd + 1;

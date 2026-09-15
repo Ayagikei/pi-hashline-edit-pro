@@ -11,6 +11,8 @@ import {
   readConfigWithStatus,
   writeConfig,
 } from "../../src/config";
+import { configPath } from "../../src/paths";
+import { stat } from "fs/promises";
 import { withTempDir } from "../support/fixtures";
 
 
@@ -324,6 +326,33 @@ describe("config - diffContextLines", () => {
       expect(await adjustDiffContextLines(-5)).toBe(0);
       expect(await adjustDiffContextLines(50)).toBe(10);
       expect((await readConfig()).diffContextLines).toBe(10);
+    });
+  });
+});
+
+async function withStaleLock(prefix: string, ageMs: number, run: (lockPath: string) => Promise<void>): Promise<void> {
+  await withTempDir(prefix, async () => {
+    const { mkdir, utimes } = await import("fs/promises");
+    const lockPath = `${configPath()}.lock`;
+    await mkdir(lockPath, { recursive: true, mode: 0o700 });
+    const stale = new Date(Date.now() - ageMs);
+    await utimes(lockPath, stale, stale);
+    await run(lockPath);
+  });
+}
+
+describe("config - lock recovery", () => {
+  it("recovers a crashed lock once it is stale and removes it after the write", async () => {
+    await withStaleLock("pi-hashline-config-lock-", 6000, async (lockPath) => {
+      expect(await toggleAutoRead()).toBe(false);
+      await expect(stat(lockPath)).rejects.toThrow();
+    });
+  });
+
+  it("recovers a crashed lock that is still fresh by waiting until it is stale", async () => {
+    await withStaleLock("pi-hashline-config-lock-fresh-", 1000, async (lockPath) => {
+      expect(await toggleAutoRead()).toBe(false);
+      await expect(stat(lockPath)).rejects.toThrow();
     });
   });
 });

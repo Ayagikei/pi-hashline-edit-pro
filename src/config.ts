@@ -96,17 +96,23 @@ export async function readConfig(): Promise<Config> {
 export async function readConfigWithStatus(): Promise<{ config: Config; corrupted: boolean }> {
   return loadConfigFile();
 }
-const CONFIG_LOCK_RETRIES = 80;
 const CONFIG_LOCK_DELAY_MS = 25;
 const CONFIG_LOCK_STALE_MS = 5000;
-async function acquireConfigLock(lockPath: string): Promise<void> {
+const CONFIG_LOCK_RETRIES = Math.ceil(CONFIG_LOCK_STALE_MS / CONFIG_LOCK_DELAY_MS) * 2;
+
+interface ConfigLock {
+  path: string;
+  dev: number;
+  ino: number;
+}
+
+async function acquireConfigLock(lockPath: string): Promise<ConfigLock> {
   try {
     await mkdir(dirname(lockPath), { recursive: true, mode: 0o700 });
   } catch { }
   for (let attempt = 0; attempt < CONFIG_LOCK_RETRIES; attempt++) {
     try {
       await mkdir(lockPath, { mode: 0o700 });
-      return;
     } catch (error) {
       if (errCode(error) === "ENOENT") {
         try {
@@ -123,26 +129,44 @@ async function acquireConfigLock(lockPath: string): Promise<void> {
         }
       } catch { }
       await new Promise<void>((r) => setTimeout(r, CONFIG_LOCK_DELAY_MS));
+      continue;
+    }
+    try {
+      const st = await stat(lockPath);
+      return { path: lockPath, dev: st.dev, ino: st.ino };
+    } catch (error) {
+      if (errCode(error) !== "ENOENT") {
+        try {
+          await rm(lockPath, { recursive: true, force: true });
+        } catch { }
+      }
+      continue;
     }
   }
   throw new Error(`[E_ACCESS] Could not acquire config lock: ${lockPath}`);
 }
-async function releaseConfigLock(lockPath: string): Promise<void> {
+async function releaseConfigLock(lock: ConfigLock): Promise<void> {
   try {
-    await rm(lockPath, { recursive: true, force: true });
+    const st = await stat(lock.path);
+    if (st.dev !== lock.dev || st.ino !== lock.ino) return;
+  } catch {
+    return;
+  }
+  try {
+    await rm(lock.path, { recursive: true, force: true });
   } catch { }
 }
 export async function updateConfig(mut: (config: Config) => void): Promise<Config> {
   const cfgPath = configPath();
   const lockPath = `${cfgPath}.lock`;
-  await acquireConfigLock(lockPath);
+  const lock = await acquireConfigLock(lockPath);
   try {
     const config = await readConfig();
     mut(config);
     await writeConfig(config);
     return config;
   } finally {
-    await releaseConfigLock(lockPath);
+    await releaseConfigLock(lock);
   }
 }
 export async function writeConfig(config: Config): Promise<void> {

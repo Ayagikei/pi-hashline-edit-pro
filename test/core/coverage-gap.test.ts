@@ -93,6 +93,32 @@ describe("gap dedup rows", () => {
     expect(out.diff).toContain("a");
     expect(out.diff).toContain("context");
   });
+  it("caps dedup rows at the byte budget and reports the omissions", () => {
+    const above = Array.from({ length: 400 }, () => "x".repeat(200));
+    const below = Array.from({ length: 400 }, () => "y".repeat(200));
+    const diff = " aaa\n-   │bbb\n+XYZ│BBB\n ccc";
+    const out = withDedupRows(diff, [1, undefined, 2, 3], above, below);
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+    expect(out.diff).toContain("not shown again");
+    expect(out.lineNumbers).toHaveLength(out.diff.split("\n").length);
+    const dedupRows = out.diff.split("\n").filter((row) => row.startsWith("dedup│") && !row.includes("not shown again"));
+    expect(dedupRows.length).toBeGreaterThan(0);
+    expect(dedupRows.length).toBeLessThan(400);
+  });
+  it("reserves the omission note before capping dedup rows", () => {
+    const rows = Array.from({ length: 300 }, () => "z".repeat(190));
+    const out = withDedupRows("+a\n-b", [1, 2], rows, []);
+    expect(out.diff).toContain("not shown again");
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+    expect(out.diff.split("\n")).toHaveLength(out.lineNumbers.length);
+  });
+  it("honors an explicit byte budget and keeps the note inside it", () => {
+    const rows = Array.from({ length: 100 }, () => "z".repeat(50));
+    const out = withDedupRows("+a\n-b", [1, 2], rows, [], 400);
+    expect(out.diff).toContain("not shown again");
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(400);
+    expect(out.diff.split("\n")).toHaveLength(out.lineNumbers.length);
+  });
 });
 
 describe("gap payload contract", () => {
