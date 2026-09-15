@@ -8,7 +8,10 @@ import { shutdownHashStore } from "../../src/hash-store";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
 import { errCode } from "../../src/utils";
+const envRestores: Array<() => void> = [];
+
 afterEach(() => {
+  while (envRestores.length > 0) envRestores.pop()!();
   resetRegistryForTests();
   resetBatchStateForTests();
 });
@@ -146,8 +149,7 @@ export async function withTempDir(
 }
 export async function makeTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(await getWritableTempRoot(), prefix));
-  process.env.HOME = dir;
-  process.env.XDG_CONFIG_HOME = "";
+  envRestores.push(withHome(dir));
   return dir;
 }
 export function makeFakePiRegistry() {
