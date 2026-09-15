@@ -13,13 +13,15 @@ export interface EditToolFlags {
   strictInput: boolean;
   boundaryDedupMode: BoundaryDedupMode;
   autoRead: boolean;
+  autoReadAllActive: boolean;
 }
 
 export const DEFAULT_EDIT_FLAGS: EditToolFlags = {
   requirePath: false,
   strictInput: false,
   boundaryDedupMode: "on",
-  autoRead: true
+  autoRead: true,
+  autoReadAllActive: false
 };
 
 export async function currentEditFlags(): Promise<EditToolFlags> {
@@ -28,7 +30,8 @@ export async function currentEditFlags(): Promise<EditToolFlags> {
     requirePath: config.requirePath === true,
     strictInput: config.strictInput === true,
     boundaryDedupMode: config.boundaryDedupMode ?? "on",
-    autoRead: config.autoRead !== false
+    autoRead: config.autoRead !== false,
+    autoReadAllActive: (config.autoReadAll ?? "off") !== "off"
   };
 }
 
@@ -64,15 +67,18 @@ export function withReplacePrompts(base: { description: string; snippet: string;
 }
 
 export function withReadPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
+  if (flags.autoReadAllActive) return { description: base.description, snippet: base.snippet, guidelines: base.guidelines.filter((guideline) => !guideline.includes("call before `replace`")) };
   if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...base.guidelines] };
-  const guidelines = base.guidelines.map((guideline) => guideline.startsWith("`read`: call again after an edit") ? "`read`: call again after an edit when you need anchors you lack." : guideline);
-  return { description: base.description, snippet: base.snippet, guidelines };
+  const guidelines = base.guidelines.filter((guideline) => !guideline.includes("call before `replace`"));
+  const mapped = guidelines.map((guideline) => guideline.startsWith("`read`: call again after an edit") ? "`read`: call again after an edit when you need anchors you lack." : guideline);
+  return { description: base.description, snippet: base.snippet, guidelines: mapped };
 }
 
 export function withInsertPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
   const descriptionParts = [base.description];
   const snippetParts = [base.snippet];
-  const guidelines = [...base.guidelines];
+  let guidelines = [...base.guidelines];
+  if (flags.autoReadAllActive) guidelines = guidelines.map((guideline) => guideline.includes("must have been shown by") ? "`insert`: the anchor must have been shown by attached anchors, a post-edit diff (`+anchor│`/` anchor│`), or any served `anchor│content` row. Empty file: attached `anchor│` row — insert `after` it. Do not re-read [complete] files." : guideline);
   if (flags.requirePath) {
     descriptionParts.push("Also give `path` matching the file the anchor was served for; it is required and must match anchor ownership.");
     snippetParts.push("; include `path` (required)");
