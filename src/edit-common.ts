@@ -72,7 +72,7 @@ export function withReadPrompts(base: { description: string; snippet: string; gu
     const rewritten = base.guidelines
       .filter((guideline) => !guideline.includes("call before `replace`"))
       .map((guideline) => {
-        if (guideline.includes("view files with `read`")) return "`read`: only use `read` for omitted or `[truncated]` files, not `bash` (`sed`/`grep`/`cat`) — attached `[complete]` rows already carry usable anchors, no `read` needed.";
+        if (guideline.includes("view files with `read`")) return "`read`: only use `read` for omitted files, not `bash` (`sed`/`grep`/`cat`) — attached `[complete]` rows already carry usable anchors, no `read` needed.";
         if (guideline.startsWith("`read`: call again after an edit")) return flags.autoRead ? "`read`: call again after an edit only when anchors are missing from the attachment and post-edit diff — `+anchor│`/` anchor│` rows and any served `anchor│content` rows already carry fresh anchors for the changed range." : "`read`: call again after an edit only when anchors are missing from the attachment.";
         return guideline;
       });

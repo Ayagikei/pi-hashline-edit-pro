@@ -193,7 +193,7 @@ describe("discoverAutoReadAllFiles", () => {
     }
   });
 
-  it("marks complete files and truncated files with offset hints", async () => {
+  it("marks complete files", async () => {
     const cwd = await makeTempDir("pi-hashline-auto-read-all-markers-");
     try {
       initGitRepo(cwd);
@@ -202,13 +202,11 @@ describe("discoverAutoReadAllFiles", () => {
       const injection = await buildAutoReadAllInjection(cwd, 1_000_000);
       expect(injection).toBeDefined();
       expect(injection!.completeFiles).toBe(2);
-      expect(injection!.truncatedFiles).toBe(0);
       expect(injection!.text).toContain("=== small.txt ===");
       expect(injection!.text).toContain("[complete, 2 lines;");
       expect(injection!.text).toContain("=== big.txt ===");
       expect(injection!.text).toContain("[complete, 2500 lines;");
-      expect(injection!.text).not.toContain("[truncated,");
-      expect(injection!.text).toContain("[coverage: 2 complete, 0 truncated,");
+      expect(injection!.text).toContain("[coverage: 2 complete,");
     } finally {
       await cleanupCwd(cwd);
     }

@@ -164,10 +164,7 @@ export interface AutoReadAllDiscovery {
 export interface AutoReadAllSection {
   file: string;
   text: string;
-  complete: boolean;
   totalLines: number;
-  shownLines: number;
-  nextOffset?: number;
 }
 export interface AutoReadAllInjection {
   text: string;
@@ -176,7 +173,6 @@ export interface AutoReadAllInjection {
   omitted: string[];
   chunks: string[];
   completeFiles: number;
-  truncatedFiles: number;
 }
 
 function runCommand(command: string, args: string[], cwd: string): Promise<{ stdout: string; code: number }> {
@@ -366,11 +362,8 @@ async function renderFile(file: string, cwd: string): Promise<AutoReadAllSection
     const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, AUTO_READ_ALL_MAX_BUDGET_BYTES, MAX_HASH_LINES);
     serveRows(absolutePath, fileHashes, splitLines(normalized), preview.servedHashes);
     const totalLines = fileHashes.length;
-    const shownLines = preview.servedHashes.length;
-    const complete = preview.truncation === undefined && preview.nextOffset === undefined && shownLines >= totalLines;
-    const status = complete ? `[complete, ${totalLines} lines; NEVER call read — it returns the same anchors]` : `[truncated, showing ${shownLines} of ${totalLines} lines; use read with offset=${preview.nextOffset ?? shownLines + 1} to continue]`;
-    const nextOffset = preview.nextOffset;
-    return { file, text: `=== ${file} ===\n${status}\n${preview.text}`, complete, totalLines, shownLines, ...(nextOffset !== undefined ? { nextOffset } : {}) };
+    const status = `[complete, ${totalLines} lines; NEVER call read — it returns the same anchors]`;
+    return { file, text: `=== ${file} ===\n${status}\n${preview.text}`, totalLines };
   } catch (error) {
     console.error(`Auto-read all: skipped ${file}:`, error);
     return undefined;
@@ -402,7 +395,6 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
   const omitted: string[] = [];
   let bytes = 0;
   let completeFiles = 0;
-  let truncatedFiles = 0;
   for (const file of discovery.files) {
     const section = await renderFile(file, cwd);
     if (section === undefined) {
@@ -416,18 +408,16 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
     }
     sections.push(section);
     bytes += sectionBytes;
-    if (section.complete) completeFiles += 1;
-    else truncatedFiles += 1;
+    completeFiles += 1;
   }
   if (sections.length === 0) return undefined;
   const sectionTexts = sections.map((section) => section.text);
   const chunks = chunkAutoReadAllSections(sectionTexts);
-  const coverage = `[coverage: ${completeFiles} complete, ${truncatedFiles} truncated, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; NEVER call read for [complete] — it returns the same anchors]`;
-  const completeNames = sections.filter((section) => section.complete).map((section) => section.file);
-  const truncatedNames = sections.filter((section) => !section.complete).map((section) => section.file);
-  const machineList = `[files complete: ${JSON.stringify(completeNames)} truncated: ${JSON.stringify(truncatedNames)} omitted: ${JSON.stringify(omitted)}]`;
+  const coverage = `[coverage: ${completeFiles} complete, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; NEVER call read for [complete] — it returns the same anchors]`;
+  const completeNames = sections.map((section) => section.file);
+  const machineList = `[files complete: ${JSON.stringify(completeNames)} omitted: ${JSON.stringify(omitted)}]`;
   const text = `${HEADER}\n\n${coverage}\n${machineList}\n\n${sectionTexts.join("\n\n")}\n\n${buildFooter(sections.length, discovery, omitted)}`;
-  return { text, files: sections.length, bytes, omitted, chunks, completeFiles, truncatedFiles };
+  return { text, files: sections.length, bytes, omitted, chunks, completeFiles };
 }
 
 export function autoReadAllBudget(model: { contextWindow?: number } | undefined): number {
