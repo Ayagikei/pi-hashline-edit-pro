@@ -1,3 +1,2 @@
 - `insert`: the anchor must have been shown by `read`, a post-edit diff (`+anchor│`/` anchor│`), or any served `anchor│content` row. Empty file: `read` shows one `anchor│` row — insert `after` it.
-- `insert`: same-file calls in one message join the file's batch: earlier calls reply `In batch N`, the last call shows the combined diff.
 - `insert`: a batch may pair one `before` and one `after` on the same anchor line; the pair composes into a single insertion. Any other same-line pair is an overlap.

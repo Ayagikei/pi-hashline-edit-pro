@@ -8,7 +8,7 @@ const replacementLinesSchema = Type.Array(
   }),
   {
     description:
-      "One string per line. Use [] to delete the range.",
+      "One string per line. Use [] to delete the range; [\"\"] is a single blank line.",
   },
 );
 

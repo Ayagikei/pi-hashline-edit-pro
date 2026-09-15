@@ -1,1 +1,1 @@
-Undo last `replace`/`insert` on a file; restores deleted file, keeps record on `[E_UNDO_STALE]`
+Single-level undo: reverts a file's last `replace` or `insert`
