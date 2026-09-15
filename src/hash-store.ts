@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, readFile, rename, mkdir, stat } from "node:fs/promises";
 import { hashStorePath, hashStoreDir, legacyHashStorePath } from "./paths";
 import { errCode, isRec, splitLines } from "./utils";
-import { initHasher, contentChecksum } from "./hashline/hasher";
+import { initHasher, contentChecksum, lineChecksum } from "./hashline/hasher";
 import { HASH_STORE_VERSION, HASH_STORE_BUSY_TIMEOUT } from "./constants";
 import {
   isValidHashList,
@@ -440,7 +440,7 @@ async function migrateLegacy(db: RawDb): Promise<void> {
       contentChecksum(value.content),
       splitLines(value.content).length,
       JSON.stringify(value.hashes),
-      "",
+      JSON.stringify(splitLines(value.content).map(lineChecksum)),
       Date.now(),
     ]);
   }

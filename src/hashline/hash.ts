@@ -1,8 +1,8 @@
-import { splitLines, truncateToBytes, getCached } from "../utils";
-import { MAX_HASH_SOURCE_BYTES } from "../constants";
+import { splitLines, getCached } from "../utils";
 import { loadHashStore, type HashStore } from "../hash-store";
 import { allocateFileAnchors } from "../anchor-registry";
-import { xxh32, initHasher, contentChecksum } from "./hasher";
+import { xxh32, initHasher, canon, hashSource, lineChecksum } from "./hasher";
+export { canon, hashSource, lineChecksum };
 import { HASH_LEN, ANCHOR_COUNT, anchorAt, HASH_CLASS, HASH_RUN } from "./alphabet";
 export { initHasher, HASH_LEN, HASH_CLASS, HASH_RUN };
 
@@ -46,18 +46,6 @@ export function stripRowPrefix(line: string): StrippedRow {
 		return { text: line.slice(minus[0].length), kind: "minus", hash: minus[1] };
 	}
 	return { text: line, kind: null, hash: undefined };
-}
-
-export function canon(line: string): string {
-	return line.replace(/\r/g, "").trimEnd();
-}
-
-export function hashSource(line: string): string {
-	return truncateToBytes(canon(line), MAX_HASH_SOURCE_BYTES);
-}
-
-export function lineChecksum(line: string): string {
-	return contentChecksum(hashSource(line));
 }
 
 const BITSET_WORDS = Math.ceil(HASH_SPACE / 32);

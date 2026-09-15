@@ -365,7 +365,9 @@ describe("hash-store - migration from legacy hash-store.json", () => {
       const migrated = new DatabaseSync(sqlitePath(home), { defensive: false } as any);
       try {
         const row = migrated.prepare("SELECT line_checksums, updated_at FROM snapshots WHERE path = ?").get("/also.ts") as { line_checksums: unknown; updated_at: unknown } | undefined;
-        expect(row?.line_checksums).toBe("");
+        const parsedChecks = JSON.parse(row?.line_checksums as string) as unknown;
+        expect(Array.isArray(parsedChecks)).toBe(true);
+        expect((parsedChecks as string[]).length).toBe(2);
         expect(Number(row?.updated_at)).toBeGreaterThan(0);
       } finally {
         migrated.close();
