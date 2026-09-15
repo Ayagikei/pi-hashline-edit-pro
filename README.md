@@ -166,7 +166,7 @@ Files are filtered before injection: symlinks, directories, image extensions (in
 
 Each attached file carries a status line: `[complete, N lines; do NOT re-read]` means the section is fully attached and must be edited directly without calling `read`, while `[truncated, showing M of N lines; use read with offset=X to continue]` means only the first bytes are attached. A coverage line after the header reports complete versus truncated counts and the number of 48KB file-boundary chunks the payload splits into, so a host-side cut never tears a file in the middle.
 
-The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"on"`, or `"git"`; older configs with `true` or `false` are read as `"on"` or `"off"`).
+The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"on"`, or `"git"`; older configs with `true` or `false` are read as `"on"` or `"off"`). Extra folders are ignored via `/hashline-config` as Ignore folders and via `config.json` as `autoReadAllIgnore` (array of folder names, for example `["docs", "tmp"]`); a single-segment entry skips any path containing that folder (case-insensitive), while an entry with a slash (for example `"src/tmp"`) skips that folder path. Custom ignores are counted with the vendor/name/pattern skips in the footer.
 
 ## Tool result details
 
@@ -183,7 +183,7 @@ All five tools return machine-readable metadata in `details` alongside the model
 
 | Command | Description |
 | --- | --- |
-| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
+| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, ignore folders, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
 | `/clear-anchors` | Clear the session's anchor claims. Anchors are re-claimed on the next `read`. |
 
 Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a setting is first changed in `/hashline-config`:
@@ -192,6 +192,7 @@ Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a se
 {
   "autoRead": true,
   "autoReadAll": "off",
+  "autoReadAllIgnore": [],
   "anchorGrepEnabled": true,
   "requirePath": false,
   "strictInput": false,

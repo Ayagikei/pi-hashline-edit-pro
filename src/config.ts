@@ -15,6 +15,7 @@ export interface Config {
   autoRead: boolean;
   anchorGrepEnabled: boolean;
   autoReadAll?: AutoReadAllMode;
+  autoReadAllIgnore?: string[];
   requirePath?: boolean;
   strictInput?: boolean;
   boundaryDedupMode?: BoundaryDedupMode;
@@ -25,6 +26,7 @@ const DEFAULT_CONFIG: Config = {
   autoRead: true,
   anchorGrepEnabled: true,
   autoReadAll: "off",
+  autoReadAllIgnore: [],
   requirePath: false,
   strictInput: false,
   boundaryDedupMode: "on",
@@ -45,6 +47,26 @@ function parseAutoReadAllMode(value: unknown): AutoReadAllMode {
   if (value === true) return "on";
   if (value === false) return "off";
   return DEFAULT_CONFIG.autoReadAll ?? "off";
+}
+
+export function normalizeAutoReadAllIgnoreEntry(entry: string): string {
+  return entry.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/");
+}
+
+export function parseAutoReadAllIgnore(value: unknown): string[] {
+  const raw = typeof value === "string" ? value.split(",") : Array.isArray(value) ? value : [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const cleaned = normalizeAutoReadAllIgnoreEntry(item);
+    if (cleaned.length === 0) continue;
+    const lower = cleaned.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    out.push(cleaned);
+  }
+  return out;
 }
 
 export function normalizeDiffContextLines(value: unknown): number {
@@ -68,6 +90,7 @@ function parseConfig(content: string): Config {
   const boundaryDedupMode = parsed.boundaryDedupMode;
   const legacyBoundaryDedup = parsed.boundaryDedupEnabled;
   const diffContextLines = parsed.diffContextLines;
+  const autoReadAllIgnore = parsed.autoReadAllIgnore;
   return {
     autoRead: typeof autoRead === "boolean" ? autoRead : DEFAULT_CONFIG.autoRead,
     anchorGrepEnabled: typeof anchorGrepEnabled === "boolean" ? anchorGrepEnabled : DEFAULT_CONFIG.anchorGrepEnabled,
@@ -76,6 +99,7 @@ function parseConfig(content: string): Config {
     strictInput: typeof strictInput === "boolean" ? strictInput : DEFAULT_CONFIG.strictInput,
     boundaryDedupMode: parseBoundaryDedupMode(boundaryDedupMode, legacyBoundaryDedup),
     diffContextLines: normalizeDiffContextLines(diffContextLines),
+    autoReadAllIgnore: parseAutoReadAllIgnore(autoReadAllIgnore),
   };
 }
 
@@ -221,4 +245,15 @@ export async function adjustDiffContextLines(delta: number): Promise<number> {
     c.diffContextLines = next;
   });
   return next;
+}
+export async function setAutoReadAllIgnore(dirs: string[]): Promise<string[]> {
+  let next: string[] = [];
+  await updateConfig((c) => {
+    next = parseAutoReadAllIgnore(dirs);
+    c.autoReadAllIgnore = next;
+  });
+  return next;
+}
+export async function setAutoReadAllIgnoreFromText(text: string): Promise<string[]> {
+  return setAutoReadAllIgnore(text.split(","));
 }

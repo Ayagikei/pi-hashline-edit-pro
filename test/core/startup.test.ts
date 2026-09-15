@@ -176,6 +176,7 @@ describe("anchor_grep default", () => {
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).anchorGrepEnabled === false && !getActive().includes("anchor_grep") && getActive().includes("grep"));
         expect(getActive()).not.toContain("anchor_grep");
@@ -207,6 +208,7 @@ describe("anchor_grep default", () => {
         expect(getActive()).not.toContain("grep");
         expect(getActive()).toContain("anchor_grep");
         const overlay = await openConfigOverlay(commands, dir);
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
@@ -292,6 +294,7 @@ describe("hashline-config overlay rendering", () => {
 
         overlay.handleInput("j");
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).anchorGrepEnabled === false);
 
@@ -343,6 +346,7 @@ describe("hashline-config overlay rendering", () => {
 
         overlay.handleInput("j");
         overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput("+");
         await waitForConfig(async () => (await readConfig()).diffContextLines === 2);
         overlay.handleInput("-");
@@ -350,9 +354,11 @@ describe("hashline-config overlay rendering", () => {
 
         overlay.handleInput("k");
         overlay.handleInput("k");
+        overlay.handleInput("k");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).autoRead === false);
         await new Promise((resolve) => setTimeout(resolve, 250));
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("+");

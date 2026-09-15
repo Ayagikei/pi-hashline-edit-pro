@@ -104,6 +104,30 @@ function isExcludedByPattern(baseLower: string): boolean {
   if (baseLower === "coreui.css") return true;
   return false;
 }
+export function normalizeAutoReadAllIgnoreList(entries: readonly string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const entry of entries ?? []) {
+    if (typeof entry !== "string") continue;
+    const cleaned = entry.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/").toLowerCase();
+    if (cleaned.length === 0 || seen.has(cleaned)) continue;
+    seen.add(cleaned);
+    out.push(cleaned);
+  }
+  return out;
+}
+export function isExcludedByCustomIgnore(path: string, customIgnore: readonly string[]): boolean {
+  if (customIgnore.length === 0) return false;
+  const lower = path.toLowerCase();
+  const segments = lower.split("/");
+  for (const entry of customIgnore) {
+    if (entry.length === 0) continue;
+    if (!entry.includes("/")) {
+      if (segments.includes(entry)) return true;
+    } else if (lower === entry || lower.startsWith(entry + "/") || lower.includes("/" + entry + "/") || lower.endsWith("/" + entry)) return true;
+  }
+  return false;
+}
 
 const WALK_IGNORED_DIRS = new Set([
   ".git",
@@ -187,7 +211,7 @@ async function listFromRg(cwd: string): Promise<string[] | undefined> {
   return result.stdout.split("\0").filter((entry) => entry.length > 0);
 }
 
-async function walkDir(dir: string, base: string, out: string[]): Promise<void> {
+async function walkDir(dir: string, base: string, out: string[], customIgnore: readonly string[] = []): Promise<void> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -199,7 +223,8 @@ async function walkDir(dir: string, base: string, out: string[]): Promise<void> 
     const full = join(dir, entry.name);
     if (entry.isDirectory()) {
       if (WALK_IGNORED_DIRS.has(entry.name) || EXCLUDED_SEGMENT_SET.has(entry.name.toLowerCase())) continue;
-      await walkDir(full, base, out);
+      if (customIgnore.length > 0 && isExcludedByCustomIgnore(toPosix(relative(base, full)), customIgnore)) continue;
+      await walkDir(full, base, out, customIgnore);
     } else if (entry.isFile()) {
       out.push(toPosix(relative(base, full)));
     }
@@ -250,7 +275,8 @@ async function forEachLimit<T>(items: T[], limit: number, work: (item: T) => Pro
   await Promise.all(workers);
 }
 
-export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMode = "on"): Promise<AutoReadAllDiscovery> {
+export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMode = "on", ignoreDirs: readonly string[] = []): Promise<AutoReadAllDiscovery> {
+  const customIgnore = normalizeAutoReadAllIgnoreList(ignoreDirs);
   let source: AutoReadAllSource = "git";
   let candidates = await listFromGit(cwd);
   if (candidates === undefined) {
@@ -263,7 +289,7 @@ export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMod
   if (candidates === undefined) {
     source = "walk";
     const walked: string[] = [];
-    await walkDir(cwd, cwd, walked);
+    await walkDir(cwd, cwd, walked, customIgnore);
     candidates = walked;
   }
 
@@ -272,7 +298,7 @@ export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMod
   let skippedByName = 0;
   for (const file of unique) {
     const baseLower = baseNameOf(file).toLowerCase();
-    if (EXCLUDED_NAME_SET.has(baseLower) || isExcludedBySegment(file) || isExcludedByPattern(baseLower)) skippedByName += 1;
+    if (EXCLUDED_NAME_SET.has(baseLower) || isExcludedBySegment(file) || isExcludedByPattern(baseLower) || isExcludedByCustomIgnore(file, customIgnore)) skippedByName += 1;
     else includable.push(file);
   }
   const scanWindow = includable.slice(0, AUTO_READ_ALL_MAX_FILES * SCAN_LIMIT_MULTIPLIER);
@@ -369,8 +395,8 @@ function buildFooter(attached: number, discovery: AutoReadAllDiscovery, omitted:
   return `[hashline auto-read-all: ${attached} file(s) attached from ${discovery.source}; ${summary}${omissionNote}]`;
 }
 
-export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number, mode: AutoReadAllMode = "on"): Promise<AutoReadAllInjection | undefined> {
-  const discovery = await discoverAutoReadAllFiles(cwd, mode);
+export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number, mode: AutoReadAllMode = "on", ignoreDirs: readonly string[] = []): Promise<AutoReadAllInjection | undefined> {
+  const discovery = await discoverAutoReadAllFiles(cwd, mode, ignoreDirs);
   if (discovery.files.length === 0) return undefined;
   const sections: AutoReadAllSection[] = [];
   const omitted: string[] = [];
