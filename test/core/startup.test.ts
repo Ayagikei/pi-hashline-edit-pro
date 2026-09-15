@@ -251,8 +251,9 @@ describe("hashline-config overlay rendering", () => {
         expect(lines.some((line) => line.includes("Hashline Config"))).toBe(true);
         expect(lines.some((line) => line.includes("↑↓ navigate"))).toBe(true);
         expect(lines.filter((line) => line.includes("[x]")).length).toBe(2);
-        expect(lines.filter((line) => line.includes("[ ]")).length).toBe(3);
+        expect(lines.filter((line) => line.includes("[ ]")).length).toBe(2);
         expect(lines.filter((line) => line.includes("[on]")).length).toBe(1);
+        expect(lines.filter((line) => line.includes("[off]")).length).toBe(1);
         overlay.handleInput("k");
         expect(overlay.render(60).find((line) => line.includes("Boundary dedup"))!).toContain("> ");
         overlay.handleInput("j");
@@ -287,7 +288,7 @@ describe("hashline-config overlay rendering", () => {
 
         overlay.handleInput("j");
         overlay.handleInput(" ");
-        await waitForConfig(async () => (await readConfig()).autoReadAll === true);
+        await waitForConfig(async () => (await readConfig()).autoReadAll === "on");
 
         overlay.handleInput("j");
         overlay.handleInput("j");
@@ -311,7 +312,7 @@ describe("hashline-config overlay rendering", () => {
         const config = await readConfig();
         expect(config.autoRead).toBe(false);
         expect(config.anchorGrepEnabled).toBe(false);
-        expect(config.autoReadAll).toBe(true);
+        expect(config.autoReadAll).toBe("on");
         expect(config.requirePath).toBe(true);
         expect(config.strictInput).toBe(true);
         expect(config.boundaryDedupMode).toBe("off");

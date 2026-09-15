@@ -93,4 +93,35 @@ describe("auto-read all", () => {
       await cleanupCwd(cwd);
     }
   });
+
+  it("injects in git mode inside a git repository", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-giton-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "sample.txt"), "alpha\nbeta\n");
+      await writeConfig(cwd, { autoRead: true, anchorGrepEnabled: true, autoReadAll: "git" });
+      const { handlers } = setupIntegrationTest(cwd);
+      const ctx = sessionContext(cwd);
+      await handlers.get("session_start")!({}, ctx);
+      const first = (await handlers.get("before_agent_start")!({}, ctx)) as { message?: { content?: string } } | undefined;
+      expect(first?.message?.content).toContain("[hashline auto-read-all]");
+      expect(first?.message?.content).toContain("=== sample.txt ===");
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("skips injection in git mode outside a git repository", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-gitoff-");
+    try {
+      await writeFile(join(cwd, "sample.txt"), "alpha\nbeta\n");
+      await writeConfig(cwd, { autoRead: true, anchorGrepEnabled: true, autoReadAll: "git" });
+      const { handlers } = setupIntegrationTest(cwd);
+      const ctx = sessionContext(cwd);
+      await handlers.get("session_start")!({}, ctx);
+      expect(await handlers.get("before_agent_start")!({}, ctx)).toBeUndefined();
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
 });

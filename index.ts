@@ -11,10 +11,11 @@ import type { RMetrics } from "./src/replace-response";
 import type { ReplaceDetails } from "./src/replace";
 import { extractWarnings } from "./src/replace-render";
 import { MAX_HASH_LINES } from "./src/hashline";
+import type { AutoReadAllMode } from "./src/config";
 import {
   readConfigWithStatus,
   toggleAutoRead,
-  toggleAutoReadAll,
+  cycleAutoReadAllMode,
   toggleAnchorGrep,
   toggleRequirePath,
   toggleStrictInput,
@@ -45,7 +46,7 @@ export default function (pi: ExtensionAPI): void {
   registerWriteHook(pi);
 
   let autoRead = true;
-  let autoReadAll = false;
+  let autoReadAll: AutoReadAllMode = "off";
   let autoReadAllInjected = false;
   let grepWasActive = false;
 
@@ -80,7 +81,7 @@ export default function (pi: ExtensionAPI): void {
     const { config, corrupted } = await readConfigWithStatus();
     if (corrupted && (ctx as { hasUI?: boolean }).hasUI) ctx.ui.notify("Hashline config was corrupt and was reset to defaults", "warning");
     autoRead = config.autoRead;
-    autoReadAll = config.autoReadAll === true;
+    autoReadAll = config.autoReadAll ?? "off";
     const sessionBranch = (ctx as { sessionManager?: { getBranch?: () => Array<{ type?: string; customType?: string }> } }).sessionManager?.getBranch?.() ?? [];
     autoReadAllInjected = sessionBranch.some((entry) => entry.type === "custom_message" && entry.customType === AUTO_READ_ALL_CUSTOM_TYPE);
     await refreshEditTools();
@@ -105,10 +106,10 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (_event, ctx) => withAnchorSession(ctx, async () => {
-    if (!autoReadAll || autoReadAllInjected) return;
+    if (autoReadAll === "off" || autoReadAllInjected) return;
     autoReadAllInjected = true;
     try {
-      const injection = await buildAutoReadAllInjection(ctx.cwd, autoReadAllBudget(ctx.model));
+      const injection = await buildAutoReadAllInjection(ctx.cwd, autoReadAllBudget(ctx.model), autoReadAll);
       if (!injection) return;
       if (ctx.hasUI) ctx.ui.notify(`Auto-read all: attached ${injection.files} file(s) with anchors`, "info");
       return { message: { customType: AUTO_READ_ALL_CUSTOM_TYPE, content: injection.text, display: false } };
@@ -132,7 +133,7 @@ export default function (pi: ExtensionAPI): void {
           done,
           onToggle: async (key, delta) => {
             if (key === "autoRead") autoRead = await toggleAutoRead();
-            else if (key === "autoReadAll") { autoReadAll = await toggleAutoReadAll(); autoReadAllInjected = false; }
+            else if (key === "autoReadAll") { autoReadAll = await cycleAutoReadAllMode(); autoReadAllInjected = false; }
             else if (key === "diffContextLines") await adjustDiffContextLines(delta ?? 1);
             else if (key === "anchorGrepEnabled") {
               const enabled = await toggleAnchorGrep();

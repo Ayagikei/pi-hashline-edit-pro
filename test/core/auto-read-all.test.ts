@@ -77,6 +77,34 @@ describe("discoverAutoReadAllFiles", () => {
     }
   });
 
+  it("lists git files in git mode", async () => {
+    const cwd = await makeTempDir("pi-hashline-auto-read-all-gitmode-git-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "tracked.ts"), "export const a = 1;\n");
+      await writeFile(join(cwd, "untracked.md"), "# hi\n");
+      execFileSync("git", ["add", "tracked.ts"], { cwd });
+
+      const discovery = await discoverAutoReadAllFiles(cwd, "git");
+      expect(discovery.source).toBe("git");
+      expect(discovery.files).toEqual(["tracked.ts", "untracked.md"]);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
+  it("returns no files in git mode outside a git repository", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "pi-hashline-auto-read-all-gitmode-"));
+    try {
+      await writeFile(join(cwd, "keep.txt"), "keep\n");
+      const discovery = await discoverAutoReadAllFiles(cwd, "git");
+      expect(discovery.source).toBe("git");
+      expect(discovery.files).toEqual([]);
+    } finally {
+      await cleanupCwd(cwd);
+    }
+  });
+
   it("skips package-lock.json anywhere in the tree", async () => {
     const cwd = await makeTempDir("pi-hashline-auto-read-all-lock-");
     try {

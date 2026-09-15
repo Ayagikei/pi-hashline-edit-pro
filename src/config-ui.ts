@@ -18,7 +18,7 @@ export interface ConfigRow {
 export function configRows(config: Config): ConfigRow[] {
   return [
     { key: "autoRead", label: "Auto-read", hint: "Anchors after write + post-edit diffs", enabled: config.autoRead !== false },
-    { key: "autoReadAll", label: "Auto-read all", hint: "Attach every non-ignored file with anchors on the first turn", enabled: config.autoReadAll === true },
+    { key: "autoReadAll", label: "Auto-read all", hint: "Attach files on the first turn: off, on, git (git repos only)", enabled: (config.autoReadAll ?? "off") !== "off", mode: config.autoReadAll ?? "off", cycle: ["off", "on", "git"] },
     { key: "diffContextLines", label: "Diff context", hint: "Surrounding lines in post-edit diffs (needs Auto-read)", enabled: config.autoRead !== false, value: config.diffContextLines ?? 1, disabled: config.autoRead === false },
     { key: "anchorGrepEnabled", label: "Anchor grep", hint: "anchor_grep tool (builtin grep off while on)", enabled: config.anchorGrepEnabled === true },
     { key: "requirePath", label: "Require path", hint: "replace + insert need path (RPC visibility)", enabled: config.requirePath === true },

@@ -4,6 +4,8 @@ import { configPath } from "./paths";
 import { errCode, isRec } from "./utils";
 import { writeAtomic } from "./fs-write";
 export type BoundaryDedupMode = "on" | "off" | "strict";
+export type AutoReadAllMode = "off" | "on" | "git";
+const AUTO_READ_ALL_MODES: AutoReadAllMode[] = ["off", "on", "git"];
 
 export const DEFAULT_DIFF_CONTEXT_LINES = 1;
 export const MIN_DIFF_CONTEXT_LINES = 0;
@@ -12,7 +14,7 @@ export const MAX_DIFF_CONTEXT_LINES = 10;
 export interface Config {
   autoRead: boolean;
   anchorGrepEnabled: boolean;
-  autoReadAll?: boolean;
+  autoReadAll?: AutoReadAllMode;
   requirePath?: boolean;
   strictInput?: boolean;
   boundaryDedupMode?: BoundaryDedupMode;
@@ -22,7 +24,7 @@ export interface Config {
 const DEFAULT_CONFIG: Config = {
   autoRead: true,
   anchorGrepEnabled: true,
-  autoReadAll: false,
+  autoReadAll: "off",
   requirePath: false,
   strictInput: false,
   boundaryDedupMode: "on",
@@ -36,6 +38,13 @@ function parseBoundaryDedupMode(mode: unknown, legacy: unknown): BoundaryDedupMo
   if (legacy === true) return "on";
   if (legacy === false) return "off";
   return DEFAULT_CONFIG.boundaryDedupMode ?? "on";
+}
+
+function parseAutoReadAllMode(value: unknown): AutoReadAllMode {
+  if (value === "off" || value === "on" || value === "git") return value;
+  if (value === true) return "on";
+  if (value === false) return "off";
+  return DEFAULT_CONFIG.autoReadAll ?? "off";
 }
 
 export function normalizeDiffContextLines(value: unknown): number {
@@ -62,7 +71,7 @@ function parseConfig(content: string): Config {
   return {
     autoRead: typeof autoRead === "boolean" ? autoRead : DEFAULT_CONFIG.autoRead,
     anchorGrepEnabled: typeof anchorGrepEnabled === "boolean" ? anchorGrepEnabled : DEFAULT_CONFIG.anchorGrepEnabled,
-    autoReadAll: typeof autoReadAll === "boolean" ? autoReadAll : DEFAULT_CONFIG.autoReadAll,
+    autoReadAll: parseAutoReadAllMode(autoReadAll),
     requirePath: typeof requirePath === "boolean" ? requirePath : DEFAULT_CONFIG.requirePath,
     strictInput: typeof strictInput === "boolean" ? strictInput : DEFAULT_CONFIG.strictInput,
     boundaryDedupMode: parseBoundaryDedupMode(boundaryDedupMode, legacyBoundaryDedup),
@@ -174,7 +183,7 @@ export async function writeConfig(config: Config): Promise<void> {
 }
 
 
-type ToggleKey = "autoRead" | "anchorGrepEnabled" | "autoReadAll" | "requirePath" | "strictInput";
+type ToggleKey = "autoRead" | "anchorGrepEnabled" | "requirePath" | "strictInput";
 
 async function toggleFlag(key: ToggleKey): Promise<boolean> {
   const config = await updateConfig((c) => { c[key] = !(c[key] === true); });
@@ -182,7 +191,15 @@ async function toggleFlag(key: ToggleKey): Promise<boolean> {
 }
 export const toggleAutoRead = (): Promise<boolean> => toggleFlag("autoRead");
 export const toggleAnchorGrep = (): Promise<boolean> => toggleFlag("anchorGrepEnabled");
-export const toggleAutoReadAll = (): Promise<boolean> => toggleFlag("autoReadAll");
+export async function cycleAutoReadAllMode(): Promise<AutoReadAllMode> {
+  let next: AutoReadAllMode = "off";
+  await updateConfig((c) => {
+    const current = c.autoReadAll ?? "off";
+    next = AUTO_READ_ALL_MODES[(AUTO_READ_ALL_MODES.indexOf(current) + 1) % AUTO_READ_ALL_MODES.length] ?? "off";
+    c.autoReadAll = next;
+  });
+  return next;
+}
 export const toggleRequirePath = (): Promise<boolean> => toggleFlag("requirePath");
 export const toggleStrictInput = (): Promise<boolean> => toggleFlag("strictInput");
 export async function cycleBoundaryDedupMode(): Promise<BoundaryDedupMode> {

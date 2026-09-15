@@ -9,6 +9,7 @@ import {
   AUTO_READ_ALL_MIN_BUDGET_BYTES,
   SNIFF_BYTES,
 } from "./constants";
+import type { AutoReadAllMode } from "./config";
 import { serveRows } from "./served";
 import { readNormFile } from "./file-reader";
 import { resolveRgPath } from "./grep";
@@ -180,10 +181,13 @@ async function forEachLimit<T>(items: T[], limit: number, work: (item: T) => Pro
   await Promise.all(workers);
 }
 
-export async function discoverAutoReadAllFiles(cwd: string): Promise<AutoReadAllDiscovery> {
+export async function discoverAutoReadAllFiles(cwd: string, mode: AutoReadAllMode = "on"): Promise<AutoReadAllDiscovery> {
   let source: AutoReadAllSource = "git";
   let candidates = await listFromGit(cwd);
   if (candidates === undefined) {
+    if (mode === "git") {
+      return { files: [], source: "git", discovered: 0, skippedBinary: 0, skippedLarge: 0, skippedOther: 0, skippedByName: 0 };
+    }
     candidates = await listFromRg(cwd);
     source = "rg";
   }
@@ -273,8 +277,8 @@ function buildFooter(attached: number, discovery: AutoReadAllDiscovery, omitted:
   return `[hashline auto-read-all: ${attached} file(s) attached from ${discovery.source}; ${summary}${omissionNote}]`;
 }
 
-export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number): Promise<AutoReadAllInjection | undefined> {
-  const discovery = await discoverAutoReadAllFiles(cwd);
+export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number, mode: AutoReadAllMode = "on"): Promise<AutoReadAllInjection | undefined> {
+  const discovery = await discoverAutoReadAllFiles(cwd, mode);
   if (discovery.files.length === 0) return undefined;
   const sections: string[] = [];
   const omitted: string[] = [];

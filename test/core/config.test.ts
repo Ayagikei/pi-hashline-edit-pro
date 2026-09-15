@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   toggleAutoRead,
-  toggleAutoReadAll,
+  cycleAutoReadAllMode,
   toggleAnchorGrep,
   toggleRequirePath,
   toggleStrictInput,
@@ -78,25 +78,39 @@ describe("config - toggleAnchorGrep", () => {
   });
 });
 
-describe("config - toggleAutoReadAll", () => {
+describe("config - cycleAutoReadAllMode", () => {
   it("defaults to off", async () => {
     await withTempDir("pi-hashline-config-test-", async () => {
-      expect((await readConfig()).autoReadAll).toBe(false);
+      expect((await readConfig()).autoReadAll).toBe("off");
     });
   });
 
-  it("toggles from default false to true", async () => {
+  it("cycles off to on to git and back to off", async () => {
     await withTempDir("pi-hashline-config-test-", async () => {
-      expect(await toggleAutoReadAll()).toBe(true);
-      expect((await readConfig()).autoReadAll).toBe(true);
+      expect(await cycleAutoReadAllMode()).toBe("on");
+      expect((await readConfig()).autoReadAll).toBe("on");
+      expect(await cycleAutoReadAllMode()).toBe("git");
+      expect((await readConfig()).autoReadAll).toBe("git");
+      expect(await cycleAutoReadAllMode()).toBe("off");
+      expect((await readConfig()).autoReadAll).toBe("off");
     });
   });
 
-  it("toggles from true back to false", async () => {
+  it("reads the mode from the config file", async () => {
     await withTempDir("pi-hashline-config-test-", async () => {
-      await writeConfig({ autoRead: true, anchorGrepEnabled: true, autoReadAll: true });
-      expect(await toggleAutoReadAll()).toBe(false);
-      expect((await readConfig()).autoReadAll).toBe(false);
+      await writeConfig({ autoRead: true, anchorGrepEnabled: true, autoReadAll: "git" });
+      expect((await readConfig()).autoReadAll).toBe("git");
+    });
+  });
+
+  it("migrates legacy boolean config values", async () => {
+    await withTempDir("pi-hashline-config-test-", async (dir) => {
+      const { writeFile, mkdir } = await import("fs/promises");
+      const { join: pathJoin } = await import("path");
+      const configDir = pathJoin(dir, ".config", "pi-hashline-edit-pro");
+      await mkdir(configDir, { recursive: true });
+      await writeFile(pathJoin(configDir, "config.json"), JSON.stringify({ autoRead: true, autoReadAll: true }));
+      expect((await readConfig()).autoReadAll).toBe("on");
     });
   });
 });
