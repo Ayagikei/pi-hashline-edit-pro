@@ -423,7 +423,10 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
   const sectionTexts = sections.map((section) => section.text);
   const chunks = chunkAutoReadAllSections(sectionTexts);
   const coverage = `[coverage: ${completeFiles} complete, ${truncatedFiles} truncated, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; NEVER call read for [complete] — it returns the same anchors]`;
-  const text = `${HEADER}\n\n${coverage}\n\n${sectionTexts.join("\n\n")}\n\n${buildFooter(sections.length, discovery, omitted)}`;
+  const completeNames = sections.filter((section) => section.complete).map((section) => section.file);
+  const truncatedNames = sections.filter((section) => !section.complete).map((section) => section.file);
+  const machineList = `[files complete: ${JSON.stringify(completeNames)} truncated: ${JSON.stringify(truncatedNames)} omitted: ${JSON.stringify(omitted)}]`;
+  const text = `${HEADER}\n\n${coverage}\n${machineList}\n\n${sectionTexts.join("\n\n")}\n\n${buildFooter(sections.length, discovery, omitted)}`;
   return { text, files: sections.length, bytes, omitted, chunks, completeFiles, truncatedFiles };
 }
 

@@ -69,8 +69,14 @@ export function withReplacePrompts(base: { description: string; snippet: string;
 
 export function withReadPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
   if (flags.autoReadAllActive) {
-    const filtered = base.guidelines.filter((guideline) => !guideline.includes("call before `replace`"));
-    return { description: base.description, snippet: base.snippet, guidelines: [...filtered, "NEVER call read for [complete] — it returns the same anchors. Edit [complete] files directly from the attachment, no read needed — anchors are already owned, re-read mints nothing and wastes tokens."] };
+    const rewritten = base.guidelines
+      .filter((guideline) => !guideline.includes("call before `replace`"))
+      .map((guideline) => {
+        if (guideline.includes("view files with `read`")) return "`read`: only use `read` for omitted or `[truncated]` files, not `bash` (`sed`/`grep`/`cat`) — attached `[complete]` rows already carry usable anchors, no `read` needed.";
+        if (guideline.startsWith("`read`: call again after an edit")) return flags.autoRead ? "`read`: call again after an edit only when anchors are missing from the attachment and post-edit diff — `+anchor│`/` anchor│` rows and any served `anchor│content` rows already carry fresh anchors for the changed range." : "`read`: call again after an edit only when anchors are missing from the attachment.";
+        return guideline;
+      });
+    return { description: base.description, snippet: base.snippet, guidelines: [...rewritten, "NEVER call read for [complete] — it returns the same anchors. Edit [complete] files directly from the attachment, no read needed — anchors are already owned, re-read mints nothing and wastes tokens."] };
   }
   if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...base.guidelines] };
   const guidelines = base.guidelines.filter((guideline) => !guideline.includes("call before `replace`"));
