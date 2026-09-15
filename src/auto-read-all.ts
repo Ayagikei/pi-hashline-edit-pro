@@ -25,7 +25,7 @@ const MAX_REPORTED_OMISSIONS = 50;
 export const AUTO_READ_ALL_CHUNK_BYTES = 48 * 1024;
 
 const HEADER =
-  "[hashline auto-read-all] The content of every non-ignored project file is attached below with live hashline anchors. Each anchor│content row is already owned and served for this session, so edit [complete] files directly from the attachment with replace and insert, no read needed — anchors are already owned, re-read mints nothing and wastes tokens. NEVER call read for [complete] — it returns the same anchors. Sections marked [complete] are fully attached; only files listed as omitted in the footer need read.";
+  "[hashline auto-read-all] Every non-ignored project file is attached below with live hashline anchors. Edit directly from the attachment with replace and insert, no read needed. Only files listed as omitted in the footer need read.";
 
 const IMAGE_EXTENSIONS = new Set([
   ".avif",
@@ -362,8 +362,7 @@ async function renderFile(file: string, cwd: string): Promise<AutoReadAllSection
     const preview = await fmtReadPreview(normalized, {}, fileHashes, absolutePath, AUTO_READ_ALL_MAX_BUDGET_BYTES, MAX_HASH_LINES);
     serveRows(absolutePath, fileHashes, splitLines(normalized), preview.servedHashes);
     const totalLines = fileHashes.length;
-    const status = `[complete, ${totalLines} lines; NEVER call read — it returns the same anchors]`;
-    return { file, text: `=== ${file} ===\n${status}\n${preview.text}`, totalLines };
+    return { file, text: `=== ${file} ===\n${preview.text}`, totalLines };
   } catch (error) {
     console.error(`Auto-read all: skipped ${file}:`, error);
     return undefined;
@@ -413,7 +412,7 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
   if (sections.length === 0) return undefined;
   const sectionTexts = sections.map((section) => section.text);
   const chunks = chunkAutoReadAllSections(sectionTexts);
-  const coverage = `[coverage: ${completeFiles} complete, ${chunks.length} chunk(s) x 48KB with file boundaries preserved; NEVER call read for [complete] — it returns the same anchors]`;
+  const coverage = `[coverage: ${completeFiles} complete]`;
   const completeNames = sections.map((section) => section.file);
   const machineList = `[files complete: ${JSON.stringify(completeNames)} omitted: ${JSON.stringify(omitted)}]`;
   const text = `${HEADER}\n\n${coverage}\n${machineList}\n\n${sectionTexts.join("\n\n")}\n\n${buildFooter(sections.length, discovery, omitted)}`;

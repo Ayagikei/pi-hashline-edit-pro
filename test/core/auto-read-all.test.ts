@@ -203,10 +203,10 @@ describe("discoverAutoReadAllFiles", () => {
       expect(injection).toBeDefined();
       expect(injection!.completeFiles).toBe(2);
       expect(injection!.text).toContain("=== small.txt ===");
-      expect(injection!.text).toContain("[complete, 2 lines;");
+      expect(injection!.text).not.toContain("[complete,");
       expect(injection!.text).toContain("=== big.txt ===");
-      expect(injection!.text).toContain("[complete, 2500 lines;");
-      expect(injection!.text).toContain("[coverage: 2 complete,");
+      expect(injection!.text).toContain("[coverage: 2 complete]");
+      expect(injection!.text).toContain("[files complete:");
     } finally {
       await cleanupCwd(cwd);
     }

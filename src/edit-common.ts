@@ -39,7 +39,7 @@ export function withReplacePrompts(base: { description: string; snippet: string;
   let description = base.description;
   const snippetParts = [base.snippet];
   let guidelines = [...base.guidelines];
-  if (flags.autoReadAllActive) guidelines = [...guidelines, "NEVER call read for [complete] — it returns the same anchors. Edit [complete] files directly from the attachment, no read needed — anchors are already owned, re-read mints nothing and wastes tokens."];
+  if (flags.autoReadAllActive) guidelines = [...guidelines, "Edit [complete] files directly from the attachment, no read needed."];
   if (!flags.autoRead) {
     description = description.replace(" Anchor follow-up edits on the `+anchor│` and ` anchor│` rows of the post-edit diff instead of re-reading.", "");
     guidelines = guidelines.map((guideline) => guideline.includes("post-edit diff") ? "`replace`: one batch per file per turn; verify each result before the next edit on that file." : guideline);
@@ -76,7 +76,7 @@ export function withReadPrompts(base: { description: string; snippet: string; gu
         if (guideline.startsWith("`read`: call again after an edit")) return flags.autoRead ? "`read`: call again after an edit only when anchors are missing from the attachment and post-edit diff — `+anchor│`/` anchor│` rows and any served `anchor│content` rows already carry fresh anchors for the changed range." : "`read`: call again after an edit only when anchors are missing from the attachment.";
         return guideline;
       });
-    return { description: base.description, snippet: base.snippet, guidelines: [...rewritten, "NEVER call read for [complete] — it returns the same anchors. Edit [complete] files directly from the attachment, no read needed — anchors are already owned, re-read mints nothing and wastes tokens."] };
+    return { description: base.description, snippet: base.snippet, guidelines: [...rewritten, "Edit [complete] files directly from the attachment, no read needed."] };
   }
   if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...base.guidelines] };
   const guidelines = base.guidelines.filter((guideline) => !guideline.includes("call before `replace`"));
@@ -88,7 +88,7 @@ export function withInsertPrompts(base: { description: string; snippet: string; 
   const descriptionParts = [base.description];
   const snippetParts = [base.snippet];
   let guidelines = [...base.guidelines];
-  if (flags.autoReadAllActive) guidelines = guidelines.map((guideline) => guideline.includes("must have been shown by") ? "`insert`: the anchor must have been shown by attached anchors, a post-edit diff (`+anchor│`/` anchor│`), or any served `anchor│content` row. Empty file: attached `anchor│` row — insert `after` it. Edit [complete] files directly from the attachment, no read needed — anchors are already owned, re-read mints nothing and wastes tokens. NEVER call read for [complete] — it returns the same anchors." : guideline);
+  if (flags.autoReadAllActive) guidelines = guidelines.map((guideline) => guideline.includes("must have been shown by") ? "`insert`: the anchor must have been shown by attached anchors, a post-edit diff (`+anchor│`/` anchor│`), or any served `anchor│content` row. Empty file: attached `anchor│` row — insert `after` it." : guideline);
   if (flags.requirePath) {
     descriptionParts.push("Also give `path` matching the file the anchor was served for; it is required and must match anchor ownership.");
     snippetParts.push("; include `path` (required)");
