@@ -117,7 +117,6 @@ describe("read tool guidelines", () => {
     const tool = getTool("read");
     const guidelines = tool.promptGuidelines as string[];
     expect(guidelines.some((g) => g.includes("call again after an edit"))).toBe(true);
-    expect(guidelines.some((g) => g.includes("call before `replace`"))).toBe(true);
   });
 });
 

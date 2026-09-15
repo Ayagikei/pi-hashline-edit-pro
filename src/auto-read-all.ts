@@ -25,7 +25,7 @@ const MAX_REPORTED_OMISSIONS = 50;
 export const AUTO_READ_ALL_CHUNK_BYTES = 48 * 1024;
 
 const HEADER =
-  "[hashline auto-read-all] Every non-ignored project file is attached below with live hashline anchors. Edit directly from the attachment with replace and insert, no read needed. Only files listed as omitted in the footer need read.";
+  "[hashline auto-read-all] Every non-ignored project file is attached below with live hashline anchors. Edit directly from the attachment with replace and insert, no read needed.";
 
 const IMAGE_EXTENSIONS = new Set([
   ".avif",
