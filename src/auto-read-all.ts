@@ -13,6 +13,7 @@ import { normalizeAutoReadAllIgnoreEntry, type AutoReadAllMode } from "./config"
 import { serveRows } from "./served";
 import { readNormFile, safeSnapId } from "./file-reader";
 import { resolveRgPath } from "./grep";
+import { globToRegex } from "./glob";
 import { MAX_HASH_LINES } from "./hashline";
 import { fmtReadPreview } from "./read";
 import { splitLines } from "./utils";
@@ -117,12 +118,41 @@ export function normalizeAutoReadAllIgnoreList(entries: readonly string[] | unde
   }
   return out;
 }
+const GLOB_CHARS_RE = /[*?[\]{}]/;
+const GLOB_CACHE_LIMIT = 256;
+const globRegexCache = new Map<string, RegExp | null>();
+
+function globRegexFor(entry: string): RegExp | null {
+  const cached = globRegexCache.get(entry);
+  if (cached !== undefined) return cached;
+  let compiled: RegExp | null;
+  try {
+    compiled = globToRegex(entry);
+  } catch {
+    compiled = null;
+  }
+  if (globRegexCache.size >= GLOB_CACHE_LIMIT) {
+    const oldest = globRegexCache.keys().next().value;
+    if (oldest !== undefined) globRegexCache.delete(oldest);
+  }
+  globRegexCache.set(entry, compiled);
+  return compiled;
+}
+
 export function isExcludedByCustomIgnore(path: string, customIgnore: readonly string[]): boolean {
   if (customIgnore.length === 0) return false;
   const lower = path.toLowerCase();
   const segments = lower.split("/");
+  const base = segments[segments.length - 1] ?? "";
   for (const entry of customIgnore) {
     if (entry.length === 0) continue;
+    if (GLOB_CHARS_RE.test(entry)) {
+      const regex = globRegexFor(entry);
+      if (regex !== null) {
+        if (entry.includes("/") ? regex.test(lower) : regex.test(base)) return true;
+        continue;
+      }
+    }
     if (!entry.includes("/")) {
       if (segments.includes(entry)) return true;
     } else if (lower === entry || lower.startsWith(entry + "/") || lower.includes("/" + entry + "/") || lower.endsWith("/" + entry)) return true;

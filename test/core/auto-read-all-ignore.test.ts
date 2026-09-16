@@ -43,6 +43,33 @@ describe("isExcludedByCustomIgnore", () => {
   it("returns false for empty ignore list", () => {
     expect(isExcludedByCustomIgnore("a/b.txt", [])).toBe(false);
   });
+  it("matches exact file names as single segments", () => {
+    expect(isExcludedByCustomIgnore("scratch.md", ["scratch.md"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/deep/scratch.md", ["scratch.md"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/scratch.md.bak", ["scratch.md"])).toBe(false);
+  });
+  it("matches a basename glob anywhere in the tree", () => {
+    expect(isExcludedByCustomIgnore("a.test.ts", ["*.test.ts"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/deep/b.test.ts", ["*.test.ts"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/deep/b.spec.ts", ["*.test.ts"])).toBe(false);
+  });
+  it("matches a path glob against the relative path", () => {
+    expect(isExcludedByCustomIgnore("src/generated/api.ts", ["src/generated/*.ts"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/other/api.ts", ["src/generated/*.ts"])).toBe(false);
+  });
+  it("matches globs case-insensitively", () => {
+    expect(isExcludedByCustomIgnore("SRC/Deep/DRAFT-One.MD", ["draft-*.md"])).toBe(true);
+  });
+  it("supports ? and {a,b} in globs", () => {
+    expect(isExcludedByCustomIgnore("a1.ts", ["a?.ts"])).toBe(true);
+    expect(isExcludedByCustomIgnore("a12.ts", ["a?.ts"])).toBe(false);
+    expect(isExcludedByCustomIgnore("icon.svg", ["*.{svg,png}"])).toBe(true);
+    expect(isExcludedByCustomIgnore("icon.webp", ["*.{svg,png}"])).toBe(false);
+  });
+  it("falls back to literal matching for an unparseable glob", () => {
+    expect(isExcludedByCustomIgnore("src/[z-a].txt", ["[z-a].txt"])).toBe(true);
+    expect(isExcludedByCustomIgnore("src/other.txt", ["[z-a].txt"])).toBe(false);
+  });
 });
 
 describe("parseAutoReadAllIgnore", () => {
@@ -122,6 +149,38 @@ describe("discoverAutoReadAllFiles with custom ignores", () => {
       await rmRetry(cwd);
     }
   });
+  it("skips files matched by a basename glob", async () => {
+    const cwd = await makeTempDir("pi-hashline-ignore-glob-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+      await writeFile(join(cwd, "a.test.ts"), "export const b = 2;\n");
+      await mkdir(join(cwd, "src"), { recursive: true });
+      await writeFile(join(cwd, "src", "b.test.ts"), "export const c = 3;\n");
+      const ignored = await discoverAutoReadAllFiles(cwd, "on", ["*.test.ts"]);
+      expect(ignored.files).toEqual(["keep.ts"]);
+      expect(ignored.skippedByName).toBe(2);
+    } finally {
+      await rmRetry(cwd);
+    }
+  });
+  it("skips files matched by a path glob in the injection", async () => {
+    const cwd = await makeTempDir("pi-hashline-ignore-path-glob-");
+    try {
+      initGitRepo(cwd);
+      await writeFile(join(cwd, "keep.ts"), "export const a = 1;\n");
+      await mkdir(join(cwd, "src", "generated"), { recursive: true });
+      await writeFile(join(cwd, "src", "generated", "api.ts"), "export const b = 2;\n");
+      await mkdir(join(cwd, "src", "other"), { recursive: true });
+      await writeFile(join(cwd, "src", "other", "api.ts"), "export const c = 3;\n");
+      const injection = await buildAutoReadAllInjection(cwd, 1_000_000, "on", ["src/generated/*.ts"]);
+      expect(injection).toBeDefined();
+      expect(injection!.text).toContain("=== src/other/api.ts ===");
+      expect(injection!.text).not.toContain("=== src/generated/api.ts ===");
+    } finally {
+      await rmRetry(cwd);
+    }
+  });
 });
 
 describe("configRows ignore folders", () => {
@@ -130,6 +189,8 @@ describe("configRows ignore folders", () => {
       await setAutoReadAllIgnore([]);
       const empty = configRows(await readConfig()).find((row) => row.key === "autoReadAllIgnore")!;
       expect(empty.folders).toEqual([]);
+      expect(empty.label).toBe("Ignore folders/files");
+      expect(empty.hint).toContain("globs");
       expect(empty.enabled).toBe(false);
       await setAutoReadAllIgnore(["docs", "tmp"]);
       const filled = configRows(await readConfig()).find((row) => row.key === "autoReadAllIgnore")!;
@@ -183,7 +244,7 @@ describe("HashlineConfigOverlay ignore editing", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(calls).toBe(0);
       const rendered = overlay.render(80).join("\n");
-      expect(rendered).toContain("Ignore folders");
+      expect(rendered).toContain("Ignore folders/files");
     });
   });
   it("supports backspace and ctrl-u while editing", async () => {

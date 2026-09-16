@@ -167,7 +167,7 @@ Files are filtered before injection: symlinks, directories, image extensions (in
 Each attached file is shown as `=== path ===` followed by its `anchor│content` rows — edit directly from the attachment with replace and insert, no read needed. Files attach whole.
 A coverage line after the header reports the complete count. A `[files complete: [...] omitted: [...]]` line right after it lists every attached complete file and omitted file in one place — check that line instead of scanning sections.
 
-The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"on"`, or `"git"`; older configs with `true` or `false` are read as `"on"` or `"off"`). Extra folders are ignored via `/hashline-config` as Ignore folders and via `config.json` as `autoReadAllIgnore` (array of folder names, for example `["docs", "tmp"]`); a single-segment entry skips any path containing that folder (case-insensitive), while an entry with a slash (for example `"src/tmp"`) skips that folder path. Custom ignores are counted with the vendor/name/pattern skips in the footer.
+The setting lives in `/hashline-config` as Auto-read all and in `config.json` as `autoReadAll` (`"off"`, `"on"`, or `"git"`; older configs with `true` or `false` are read as `"on"` or `"off"`). Extra folders and files are ignored via `/hashline-config` as Ignore folders/files and via `config.json` as `autoReadAllIgnore` (array of folder names, file names, or globs, for example `["docs", "scratch.md", "*.test.ts"]`). A single-segment entry skips any folder or file with that exact name (case-insensitive); an entry containing glob characters (`*`, `?`, `[`, `]`, `{`, `}`) is matched as a glob against the file name, or against the whole relative path when it also contains a slash, with the same syntax as `anchor_grep`'s `glob`; any other entry with a slash (for example `"src/tmp"`) skips that path. Custom ignores are counted with the vendor/name/pattern skips in the footer.
 
 ## Tool result details
 
@@ -184,7 +184,7 @@ All five tools return machine-readable metadata in `details` alongside the model
 
 | Command | Description |
 | --- | --- |
-| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, ignore folders, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
+| `/hashline-config` | Open the settings window: auto-read anchors, auto-read all mode, ignore folders/files, diff context lines, `anchor_grep` tool, required `path`, strict input, and boundary dedup. Persists across sessions. |
 | `/clear-anchors` | Clear the session's anchor claims. Anchors are re-claimed on the next `read`. |
 
 Settings live in `~/.config/pi-hashline-edit-pro/config.json`, created when a setting is first changed in `/hashline-config`:

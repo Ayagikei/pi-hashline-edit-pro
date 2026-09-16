@@ -20,7 +20,7 @@ export function configRows(config: Config): ConfigRow[] {
   return [
     { key: "autoRead", label: "Auto-read", hint: "Anchors after write + post-edit diffs", enabled: config.autoRead !== false },
     { key: "autoReadAll", label: "Auto-read all", hint: "Attach files on the first turn: off, on, git (git repos only)", enabled: (config.autoReadAll ?? "off") !== "off", mode: config.autoReadAll ?? "off", cycle: ["off", "on", "git"] },
-    { key: "autoReadAllIgnore", label: "Ignore folders", hint: "Extra folders skipped by auto-read all (comma-separated)", enabled: (config.autoReadAllIgnore ?? []).length > 0, folders: config.autoReadAllIgnore ?? [] },
+    { key: "autoReadAllIgnore", label: "Ignore folders/files", hint: "Extra folders, files, or globs skipped by auto-read all (comma-separated)", enabled: (config.autoReadAllIgnore ?? []).length > 0, folders: config.autoReadAllIgnore ?? [] },
     { key: "diffContextLines", label: "Diff context", hint: "Surrounding lines in post-edit diffs (needs Auto-read)", enabled: config.autoRead !== false, value: config.diffContextLines ?? 1, disabled: config.autoRead === false },
     { key: "anchorGrepEnabled", label: "Anchor grep", hint: "anchor_grep tool (builtin grep off while on)", enabled: config.anchorGrepEnabled === true },
     { key: "requirePath", label: "Require path", hint: "replace + insert need path (RPC visibility)", enabled: config.requirePath === true },
@@ -205,7 +205,7 @@ export class HashlineConfigOverlay {
       }
     });
     lines.push(theme.fg("border", `├${"─".repeat(innerWidth)}┤`));
-    const footer = this.editingIgnore ? " type to edit · Enter save · Esc cancel" : " ↑↓ navigate · space toggle · ←/→ or -/+ adjust · e edit folders · q close";
+    const footer = this.editingIgnore ? " type to edit · Enter save · Esc cancel" : " ↑↓ navigate · space toggle · ←/→ or -/+ adjust · e edit list · q close";
     lines.push(padRow(theme, innerWidth, theme.fg("dim", footer)));
     lines.push(theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
     return lines;

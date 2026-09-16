@@ -124,7 +124,7 @@ export default function (pi: ExtensionAPI): void {
   }));
 
   pi.registerCommand("hashline-config", {
-    description: "Open the hashline settings window (auto-read, auto-read all, ignore folders, diff context, grep, path, strict input, dedup)",
+    description: "Open the hashline settings window (auto-read, auto-read all, ignore folders/files, diff context, grep, path, strict input, dedup)",
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui.notify("/hashline-config requires interactive mode", "error");
