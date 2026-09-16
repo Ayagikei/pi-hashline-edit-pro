@@ -311,6 +311,18 @@ describe("makePrepareArguments", () => {
     const result = prepare({ path: "a.txt", file_path: "b.txt" });
     expect(result).toEqual({ path: "a.txt", file_path: "b.txt" });
   });
+
+  it("normalizes from and to to remove_from and remove_to", () => {
+    const prepare = makePrepareArguments();
+    const result = prepare({ from: "a", to: "b" });
+    expect(result).toEqual({ remove_from: "a", remove_to: "b" });
+  });
+
+  it("normalizes from and to only when the remove field is missing", () => {
+    const prepare = makePrepareArguments();
+    const result = prepare({ remove_from: "a", from: "b", to: "c" });
+    expect(result).toEqual({ remove_from: "a", from: "b", remove_to: "c" });
+  });
 });
 
 describe("truncateToBytes", () => {

@@ -92,6 +92,29 @@ describe("regReplace", () => {
     });
   });
 
+  it("replaces a single line via the from/to aliases", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        {
+          from: hashes[1]!, to: hashes[1]!,
+          replacement_lines: ["BeSR"],
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+      expect(result.content[0].text).toContain("Added 1 line(s), removed 1 line(s).");
+    });
+  });
+
   it("replaces a range of lines via execute", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\nddd\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();

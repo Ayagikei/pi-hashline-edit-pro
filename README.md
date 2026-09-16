@@ -85,7 +85,7 @@ Example: read showed `Hasu│old` and `arvm│old2`; to replace both:
 }
 ```
 
-Single line: use the same anchor for `remove_from` and `remove_to`. `replace_from`/`replace_to` work as aliases.
+Single line: use the same anchor for `remove_from` and `remove_to`. `replace_from`/`replace_to` and `from`/`to` work as aliases.
 
 The request is checked before any file I/O, so a bad request never touches the file.
 

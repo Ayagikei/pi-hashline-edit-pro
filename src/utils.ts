@@ -20,6 +20,14 @@ export function normalizeAnchors(record: Record<string, unknown>): void {
     record.remove_to = record.replace_to;
     delete record.replace_to;
   }
+  if (typeof record.remove_from !== "string" && typeof record.from === "string") {
+    record.remove_from = record.from;
+    delete record.from;
+  }
+  if (typeof record.remove_to !== "string" && typeof record.to === "string") {
+    record.remove_to = record.to;
+    delete record.to;
+  }
 }
 
 export function normalizeRequest(input: unknown): unknown {

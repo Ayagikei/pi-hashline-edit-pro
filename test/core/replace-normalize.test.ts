@@ -110,4 +110,36 @@ describe("normReq - top-level shape", () => {
 		expect(input.remove_to).toBe(origTo);
 		expect(input.replacement_lines).toBe(origNc);
 	});
+
+	it("normalizes from and to to remove_from and remove_to", () => {
+		const input = {
+			from: "ATIm", to: "BeSR",
+			replacement_lines: ["new"],
+		};
+		const result = normReq(input) as Record<string, unknown>;
+		expect(result.remove_from).toEqual("ATIm");
+		expect(result.remove_to).toEqual("BeSR");
+		expect(result.from).toBeUndefined();
+		expect(result.to).toBeUndefined();
+	});
+
+	it("does not overwrite existing anchors with from and to", () => {
+		const input = {
+			remove_from: "ATIm", remove_to: "BeSR",
+			from: "Other", to: "Else",
+			replacement_lines: ["new"],
+		};
+		const result = normReq(input) as Record<string, unknown>;
+		expect(result.remove_from).toEqual("ATIm");
+		expect(result.remove_to).toEqual("BeSR");
+		expect(result.from).toEqual("Other");
+		expect(result.to).toEqual("Else");
+	});
+
+	it("does not mutate the original from/to input", () => {
+		const input = { from: "ATIm", to: "BeSR", replacement_lines: ["new"] };
+		normReq(input);
+		expect(input.from).toBe("ATIm");
+		expect(input.to).toBe("BeSR");
+	});
 });
