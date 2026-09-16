@@ -223,7 +223,7 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
                       if (current !== undefined && current === stored) {
                         const served = servedForPath(canonical);
                         if (served !== undefined && served.size > 0) {
-                          throw new Error(`[E_AUTO_READ_ALL] ${rawPath} already attached and unchanged; use attached anchors.`);
+                          throw new Error(`[E_AUTO_READ_ALL] cache hit for ${rawPath}; all attachment anchors valid.`);
                         }
                       }
                     }
