@@ -179,7 +179,7 @@ export function planEdit(
 ): PlannedEdit {
   const signal = options?.signal;
   abortIf(signal);
-  const fileLines = options?.baseFileLines ?? buildIdx(content).fileLines;
+  const fileLines = options?.baseFileLines ?? splitLines(content);
   const lineIndex = { fileLines };
   const fileHashes = precomputedHashes;
   const warnings: string[] = [];

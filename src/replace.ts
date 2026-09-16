@@ -3,7 +3,6 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { constants } from "node:fs";
-import { relative } from "node:path";
 import {
   genDiff,
   type DiffSpan,
@@ -31,7 +30,7 @@ import {
 import { loadHashStore, type HashStore } from "./hash-store";
 import { adoptAnchors, servedForPath, withAnchorSession } from "./anchor-registry";
 import { resolveTarget } from "./fs-write";
-import { toCwd } from "./paths";
+import { toCwd, toDisplayPath } from "./paths";
 import { queuedEdit, editToolBase, editRenderCallWrapper, editRenderResultWrapper, resolveEditTargetWithRequirement, throwIfStrictInput, getBoundaryDedupMode, withReplacePrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { commitEdit, dedupRowsFromFixes } from "./commit";
 import { batchMemberFor, executeBatchMember, noteBatchFailure } from "./batch";
@@ -148,7 +147,7 @@ export async function execPipeline(
   const { normalized: originalNormalized, bom, originalEnding, fileHashes: originalHashes, hadUtf8DecodeErrors, absolutePath, identity } = await readNormFile(
     targetPath, cwd, { signal: options?.signal, accessMode: options?.accessMode, maxLines: MAX_HASH_LINES, store: hashStore, noPersist: options?.noPersist, allocation: options?.noPersist ? "shadow" : "real", preloadedNorm: options?.preloadedNorm },
   );
-  const displayPath = relative(cwd, absolutePath).replace(/\\/g, "/") || targetPath;
+  const displayPath = toDisplayPath(cwd, absolutePath, targetPath);
 
   const dedupMode = await getBoundaryDedupMode();
   const effectiveSkipBoundaryDedup = options?.skipBoundaryDedup === true || dedupMode === "off";

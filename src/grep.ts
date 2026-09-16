@@ -2,16 +2,16 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, win32 } from "node:path";
+import { dirname, isAbsolute, join, win32 } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tryReadNormFile } from "./file-reader";
 import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP } from "./hashline";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX, MAX_GREP_LINE_BYTES } from "./constants";
-import { toCwd } from "./paths";
+import { toCwd, toDisplayPath } from "./paths";
 import { loadP, loadGuide } from "./prompts";
 import { normReq } from "./payload-contract";
-import { abortIf, errCode, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
+import { abortIf, errCode, gutterWidth, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
 import { withAnchorSession } from "./anchor-registry";
 import { serveRows } from "./served";
 import { Text } from "@earendil-works/pi-tui";
@@ -560,14 +560,11 @@ async function collectRgMatches(
   });
 }
 
-function gutterWidthFor(numbers: number[]): number {
-  let max = 0;
-  for (const n of numbers) if (n > max) max = n;
-  return String(max || 1).length;
-}
 
 function displayRowsForHit(hit: FileHit): string[] {
-  const width = gutterWidthFor(hit.lineNumbers);
+  let max = 0;
+  for (const n of hit.lineNumbers) if (n > max) max = n;
+  const width = gutterWidth(max, 1);
   return hit.rows.map((row, i) => {
     const n = hit.lineNumbers[i]!;
     const padded = String(n).padStart(width, " ");
@@ -730,8 +727,8 @@ export function regGrep(pi: ExtensionAPI): void {
         const globRegex = req.glob === undefined ? undefined : globToRegex(req.glob);
         const matchesGlob = (absPath: string): boolean => {
           if (globRegex === undefined) return true;
-          const displayPath = relative(ctx.cwd, absPath).replace(/\\/g, "/");
-          const globPath = relative(globRoot, absPath).replace(/\\/g, "/");
+          const displayPath = toDisplayPath(ctx.cwd, absPath);
+          const globPath = toDisplayPath(globRoot, absPath);
           return globRegex.test(globPath) || globRegex.test(displayPath);
         };
         const validatedRegex = buildRegex(req.pattern, req.literal === true, req.ignoreCase === true);
@@ -772,7 +769,7 @@ export function regGrep(pi: ExtensionAPI): void {
             if (!matchesGlob(absPath)) continue;
             const norm = await readGrepFileShadow(absPath);
             if (!norm) continue;
-            const hit = makeHitFromIndices(norm, relative(ctx.cwd, absPath).replace(/\\/g, "/"), indices, context, validatedRegex, totalForFile, indices.length);
+            const hit = makeHitFromIndices(norm, toDisplayPath(ctx.cwd, absPath), indices, context, validatedRegex, totalForFile, indices.length);
             const display = displayRowsForHit(hit);
             totalRows += display.length;
             for (const r of display) totalBytes += Buffer.byteLength(r, "utf-8") + 1;
@@ -794,7 +791,7 @@ export function regGrep(pi: ExtensionAPI): void {
           if (!matchesGlob(absPath)) continue;
           const norm = await readGrepFile(absPath);
           if (!norm) continue;
-          const hit = makeHitFromIndices(norm, relative(ctx.cwd, absPath).replace(/\\/g, "/"), indices, context, validatedRegex, totalForFile, Math.min(totalForFile, remaining));
+          const hit = makeHitFromIndices(norm, toDisplayPath(ctx.cwd, absPath), indices, context, validatedRegex, totalForFile, Math.min(totalForFile, remaining));
           const display = displayRowsForHit(hit);
           const keptRows: string[] = [];
           const keptHashes: string[] = [];

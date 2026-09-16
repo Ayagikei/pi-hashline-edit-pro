@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { relative } from "node:path";
+import { toDisplayPath } from "./paths";
 import { readConfig, getDiffContextLines } from "./config";
 import { throwIfStrictInput, tryResolveEditTarget } from "./edit-common";
 import { readNormFile, safeSnapId } from "./file-reader";
@@ -178,39 +178,17 @@ function normalizeEditArgs(args: unknown): NormalizedEditArgs | undefined {
   }
   return undefined;
 }
-function anchorTargetFor(args: unknown): string | undefined {
-  const normalized = normalizeEditArgs(args);
-  if (!normalized) return undefined;
-  if (normalized.kind === "replace") return tryResolveEditTarget(normalized.removeFrom, normalized.removeTo);
-  return tryResolveEditTarget(normalized.anchor);
-}
-async function inferredTargetFor(args: unknown, cwd: string, requirePath: boolean): Promise<string | undefined> {
-  const normalized = normalizeEditArgs(args);
-  if (!normalized) return undefined;
-  if (requirePath && normalized.path) {
-    try {
-      return (await resolveInCwd(normalized.path, cwd)).resolved;
-    } catch {
-      return undefined;
-    }
-  }
-  if (normalized.kind === "replace") {
-    return tryResolveEditTarget(normalized.removeFrom) ?? (normalized.removeTo ? tryResolveEditTarget(normalized.removeTo) : undefined);
-  }
-  return undefined;
-}
 
 async function verifyPaths(
-  group: Array<{ id: string; target: string; kind: BatchKind; args: unknown }>,
+  group: Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }>,
   cwd: string,
-): Promise<Array<{ id: string; target: string; kind: BatchKind; args: unknown }>> {
-  const verified: Array<{ id: string; target: string; kind: BatchKind; args: unknown }> = [];
+): Promise<Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }>> {
+  const verified: Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }> = [];
   for (const item of group) {
-    const normalized = normalizeEditArgs(item.args);
-    if (!normalized || !normalized.path) continue;
+    if (!item.path) continue;
     let resolved: string | undefined;
     try {
-      resolved = (await resolveInCwd(normalized.path, cwd)).resolved;
+      resolved = (await resolveInCwd(item.path, cwd)).resolved;
     } catch {
       resolved = undefined;
     }
@@ -241,11 +219,24 @@ export async function planAssistantMessage(message: unknown, cwd: string): Promi
   if (calls.length < 2) return;
   const earlyConfig = await readConfig();
   const requirePath = earlyConfig.requirePath === true;
-  interface ResolvedCall { id: string; target: string; kind: BatchKind; args: unknown }
+  interface ResolvedCall { id: string; target: string; kind: BatchKind; args: unknown; path?: string }
   const resolved: ResolvedCall[] = [];
   for (const call of calls) {
-    const target = anchorTargetFor(call.args) ?? await inferredTargetFor(call.args, cwd, requirePath);
-    if (target) resolved.push({ id: call.id, target, kind: call.name as BatchKind, args: call.args });
+    const normalized = normalizeEditArgs(call.args);
+    if (!normalized) continue;
+    let target = normalized.kind === "replace" ? tryResolveEditTarget(normalized.removeFrom, normalized.removeTo) : tryResolveEditTarget(normalized.anchor);
+    if (!target) {
+      if (requirePath && normalized.path) {
+        try {
+          target = (await resolveInCwd(normalized.path, cwd)).resolved;
+        } catch {
+          target = undefined;
+        }
+      } else if (normalized.kind === "replace") {
+        target = tryResolveEditTarget(normalized.removeFrom) ?? (normalized.removeTo ? tryResolveEditTarget(normalized.removeTo) : undefined);
+      }
+    }
+    if (target) resolved.push({ id: call.id, target, kind: call.name as BatchKind, args: call.args, ...(normalized.path ? { path: normalized.path } : {}) });
   }
   const groups = new Map<string, ResolvedCall[]>();
   for (const item of resolved) {
@@ -447,7 +438,7 @@ export async function ensureBatchBase(input: {
   runtime.paths = {
     absolutePath: file.absolutePath,
     mutationTargetPath: input.mutationTargetPath,
-    displayPath: relative(input.cwd, file.absolutePath).replace(/\\/g, "/") || input.targetPath,
+    displayPath: toDisplayPath(input.cwd, file.absolutePath, input.targetPath),
   };
   return base;
 }

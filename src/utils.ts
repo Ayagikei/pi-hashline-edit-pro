@@ -137,7 +137,7 @@ export function isHashRow(line: string): boolean {
 	return /^[A-Za-z0-9]{4}│/.test(line);
 }
 
-function gutterWidth(max: number, fallback: number): number {
+export function gutterWidth(max: number, fallback: number): number {
 	return String(max || fallback).length;
 }
 

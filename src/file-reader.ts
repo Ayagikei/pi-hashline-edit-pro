@@ -1,10 +1,9 @@
 import { constants } from "node:fs";
 import { stat } from "node:fs/promises";
-import { relative } from "node:path";
 import { lineHashes } from "./hashline";
 import { loadFileKindAndText, type LFile } from "./file-kind";
 import { resolveTarget, type FileIdentity } from "./fs-write";
-import { toCwd } from "./paths";
+import { toCwd, toDisplayPath } from "./paths";
 import { detectEnding, toLF, stripBOM, type LineEnding } from "./normalize";
 import { abortIf, errCode, assertLineLimit } from "./utils";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX } from "./constants";
@@ -119,7 +118,7 @@ export async function tryReadNormFile(
   options?: ReadNormOptions,
 ): Promise<NormFile | undefined> {
   try {
-    const displayPath = relative(cwd, absPath).replace(/\\/g, "/") || absPath;
+    const displayPath = toDisplayPath(cwd, absPath);
     const file = await loadFileKindAndText(absPath, { maxLines: options?.maxLines, displayPath });
     if (file.kind !== "text") return undefined;
     return await readNormFile(absPath, cwd, { ...options, preloadedFile: file });

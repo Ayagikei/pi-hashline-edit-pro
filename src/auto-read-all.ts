@@ -9,7 +9,7 @@ import {
   AUTO_READ_ALL_MIN_BUDGET_BYTES,
   SNIFF_BYTES,
 } from "./constants";
-import type { AutoReadAllMode } from "./config";
+import { normalizeAutoReadAllIgnoreEntry, type AutoReadAllMode } from "./config";
 import { serveRows } from "./served";
 import { readNormFile, safeSnapId } from "./file-reader";
 import { resolveRgPath } from "./grep";
@@ -110,7 +110,7 @@ export function normalizeAutoReadAllIgnoreList(entries: readonly string[] | unde
   const out: string[] = [];
   for (const entry of entries ?? []) {
     if (typeof entry !== "string") continue;
-    const cleaned = entry.trim().replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/{2,}/g, "/").toLowerCase();
+    const cleaned = normalizeAutoReadAllIgnoreEntry(entry).toLowerCase();
     if (cleaned.length === 0 || seen.has(cleaned)) continue;
     seen.add(cleaned);
     out.push(cleaned);
