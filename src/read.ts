@@ -223,7 +223,7 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
                       if (current !== undefined && current === stored) {
                         const served = servedForPath(canonical);
                         if (served !== undefined && served.size > 0) {
-                          throw new Error(`[E_AUTO_READ_ALL] cache hit for ${rawPath}; all attachment anchors valid.`);
+                          throw new Error(`[E_AUTO_READ_ALL] ${rawPath} is unchanged since this session's start-of-session auto-read, so the attached content is still exact. Read succeeds on files that have changed since the full auto read.`);
                         }
                       }
                     }

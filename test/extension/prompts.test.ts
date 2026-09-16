@@ -211,11 +211,17 @@ describe("edit prompt flag variants", () => {
     expect(result.guidelines.some((g) => g.includes("strict-input is on"))).toBe(true);
   });
 
-  it("withReadPrompts keeps guidelines unchanged when auto-read is on", () => {
+  it("withReadPrompts drops the auto-read-all guideline when auto-read-all is off", () => {
     const result = withReadPrompts(readBase, DEFAULT_EDIT_FLAGS);
     expect(result.description).toBe(readBase.description);
     expect(result.snippet).toBe(readBase.snippet);
-    expect(result.guidelines).toEqual(readBase.guidelines);
+    expect(result.guidelines).toEqual(readBase.guidelines.filter((g) => !g.includes("E_AUTO_READ_ALL")));
+  });
+
+  it("withReadPrompts keeps the auto-read-all guideline and drops the re-read note when auto-read-all is on", () => {
+    const result = withReadPrompts(readBase, { ...DEFAULT_EDIT_FLAGS, autoReadAllActive: true });
+    expect(result.guidelines.some((g) => g === "`read`: `E_AUTO_READ_ALL` on an attached file means its content is still exactly as it was when attached at the start of this session.")).toBe(true);
+    expect(result.guidelines.some((g) => g.includes("call again after an edit"))).toBe(false);
   });
 
   it("withReadPrompts rewrites the re-read note when auto-read is off", () => {
