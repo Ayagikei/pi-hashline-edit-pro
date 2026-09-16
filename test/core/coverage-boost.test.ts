@@ -18,7 +18,8 @@ describe("coverage boost utils", () => {
     expect(isHashRow("Hasu│hello")).toBe(true);
     expect(isHashRow("Ha│hello")).toBe(false);
     expect(isHashRow("HasuX│hello")).toBe(false);
-    expect(isHashRow("AB1c│")).toBe(true);
+    expect(isHashRow("Abcd│")).toBe(true);
+    expect(isHashRow("AB1c│")).toBe(false);
     expect(isHashRow("")).toBe(false);
     expect(isHashRow("Hasu|hello")).toBe(false);
   });
@@ -27,7 +28,7 @@ describe("coverage boost utils", () => {
     expect(numberedRead("plain\nHasu│hello", 5)).toBe("plain\n5 │ Hasu│hello");
     expect(numberedRead("", 1)).toBe("");
     expect(numberedRead("nohash", 10)).toBe("nohash");
-    expect(numberedRead("a1Bc│x\na2Cd│y\na3De│z", 99)).toBe(" 99 │ a1Bc│x\n100 │ a2Cd│y\n101 │ a3De│z");
+    expect(numberedRead("Abcd│x\nBcde│y\nCdef│z", 99)).toBe(" 99 │ Abcd│x\n100 │ Bcde│y\n101 │ Cdef│z");
   });
   it("withLineNumbers adds gutters", () => {
     expect(withLineNumbers("a\nb", [1, 2])).toBe("1 │ a\n2 │ b");
@@ -92,7 +93,7 @@ describe("coverage boost parse", () => {
   it("parseHashRef valid", () => {
     expect(parseHashRef("Hasu")).toEqual({ hash: "Hasu" });
     expect(parseHashRef("  Hasu  ")).toEqual({ hash: "Hasu" });
-    expect(parseHashRef("A1bc")).toEqual({ hash: "A1bc" });
+    expect(parseHashRef("Abcd")).toEqual({ hash: "Abcd" });
   });
   it("parseHashRef empty", () => {
     expect(() => parseHashRef("")).toThrow(/E_BAD_REF.*Expected a 4-char/);

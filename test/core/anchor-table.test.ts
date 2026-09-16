@@ -11,11 +11,15 @@ describe("anchor table", () => {
     expect(HASH_LEN).toBe(4);
   });
 
-  it("contains only unique 4-char alphanumeric anchors in sorted order", () => {
-    const anchors = TABLE.match(/[A-Za-z0-9]{4}/g) ?? [];
+  it("contains only unique 4-letter anchors in sorted order", () => {
+    const anchors = TABLE.match(/[A-Za-z]{4}/g) ?? [];
     expect(anchors).toHaveLength(ANCHOR_COUNT);
     expect(new Set(anchors).size).toBe(ANCHOR_COUNT);
     expect(anchors.every((a, i) => i === 0 || anchors[i - 1]! < a)).toBe(true);
+  });
+
+  it("is letters only", () => {
+    expect(TABLE).toMatch(/^[A-Za-z]+$/);
   });
 
   it("is built from a shared 1360-piece alphabet", () => {

@@ -419,7 +419,7 @@ function buildFooter(attached: number, discovery: AutoReadAllDiscovery, omitted:
   return `[hashline auto-read-all: ${attached} file(s) attached from ${discovery.source}; ${summary}${omissionNote}]`;
 }
 
-export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number, mode: AutoReadAllMode = "on", ignoreDirs: readonly string[] = []): Promise<AutoReadAllInjection | undefined> {
+export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number, mode: AutoReadAllMode = "on", ignoreDirs: readonly string[] = [], sessionKey?: string): Promise<AutoReadAllInjection | undefined> {
   const discovery = await discoverAutoReadAllFiles(cwd, mode, ignoreDirs);
   if (discovery.files.length === 0) return undefined;
   const sections: AutoReadAllSection[] = [];
@@ -439,7 +439,7 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
     }
     sections.push(section);
     const snapshotId = await safeSnapId(section.absolutePath, "auto-read-all");
-    if (snapshotId !== undefined) recordAutoReadAllComplete(section.absolutePath, snapshotId);
+    if (snapshotId !== undefined) recordAutoReadAllComplete(sessionKey, section.absolutePath, snapshotId);
     bytes += sectionBytes;
     completeFiles += 1;
   }

@@ -1,13 +1,27 @@
-const completeSnapshots = new Map<string, string>();
-export function recordAutoReadAllComplete(absolutePath: string, snapshotId: string): void {
-  completeSnapshots.set(absolutePath, snapshotId);
+const completeSnapshots = new Map<string, Map<string, string>>();
+
+function scopeFor(sessionKey: string | undefined): string {
+  return sessionKey ?? "";
 }
-export function getAutoReadAllSnapshot(absolutePath: string): string | undefined {
-  return completeSnapshots.get(absolutePath);
+
+export function recordAutoReadAllComplete(sessionKey: string | undefined, absolutePath: string, snapshotId: string): void {
+  const scope = scopeFor(sessionKey);
+  let snapshots = completeSnapshots.get(scope);
+  if (!snapshots) {
+    snapshots = new Map();
+    completeSnapshots.set(scope, snapshots);
+  }
+  snapshots.set(absolutePath, snapshotId);
 }
-export function invalidateAutoReadAllComplete(absolutePath: string): void {
-  completeSnapshots.delete(absolutePath);
+
+export function getAutoReadAllSnapshot(sessionKey: string | undefined, absolutePath: string): string | undefined {
+  return completeSnapshots.get(scopeFor(sessionKey))?.get(absolutePath);
 }
-export function clearAutoReadAllComplete(): void {
+
+export function clearAutoReadAllComplete(sessionKey: string | undefined): void {
+  completeSnapshots.delete(scopeFor(sessionKey));
+}
+
+export function clearAllAutoReadAllComplete(): void {
   completeSnapshots.clear();
 }

@@ -9,13 +9,13 @@ describe("parseHashRef", () => {
 
 	it("rejects trailing content after the anchor", () => {
 		expect(() => parseHashRef("ATIm:const x = 1;")).toThrow(
-			/Expected a 4-char alphanumeric anchor/,
+			/Expected a 4-character anchor/,
 		);
 	});
 
 	it("rejects a full anchor│content line copied into remove_from/remove_to", () => {
 		expect(() => parseHashRef("ATIm│const x = 1;")).toThrow(
-			/use only the 4-char anchor, drop everything from "│" onward/,
+			/use only the 4-character anchor, drop everything from "│" onward/,
 		);
 	});
 	it("rejects leading >>> markers (strict mode: no marker stripping)", () => {
@@ -43,6 +43,9 @@ describe("parseHashRef", () => {
 
 	it("rejects malformed anchors with E_BAD_REF", () => {
 		expect(() => parseHashRef("invalid")).toThrow(/^\[E_BAD_REF\]/);
+	});
+	it("rejects anchors containing digits because anchors are letters only", () => {
+		expect(() => parseHashRef("A1bc")).toThrow(/^\[E_BAD_REF\]/);
 	});
 
 	it("rejects legacy LINE#HASH format", () => {

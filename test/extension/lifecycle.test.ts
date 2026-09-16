@@ -140,4 +140,24 @@ describe("session_shutdown lifecycle", () => {
       expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toBeUndefined();
     });
   });
+  it("clears only the shutting-down session's auto-read-all completions", async () => {
+    await withTempDir("lifecycle-auto-read-clear-", async (dir) => {
+      const { join } = await import("path");
+      const { pi, handlers } = makePiStub();
+      await registerExtension(pi);
+      const { sessionKeyFor } = await import("../../src/anchor-registry");
+      const { recordAutoReadAllComplete, getAutoReadAllSnapshot } = await import("../../src/auto-read-all-state");
+      const sample = join(dir, "sample.txt");
+      const other = join(dir, "other.txt");
+      const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => join(dir, "session.jsonl"), getSessionId: () => "lifecycle" } };
+      const key = sessionKeyFor(ctx);
+      recordAutoReadAllComplete(key, sample, "snap-a");
+      recordAutoReadAllComplete("other-session", other, "snap-b");
+      expect(getAutoReadAllSnapshot(key, sample)).toBe("snap-a");
+      expect(getAutoReadAllSnapshot("other-session", other)).toBe("snap-b");
+      await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
+      expect(getAutoReadAllSnapshot(key, sample)).toBeUndefined();
+      expect(getAutoReadAllSnapshot("other-session", other)).toBe("snap-b");
+    });
+  });
 });

@@ -7,6 +7,7 @@ import { regGrep } from "./src/grep";
 import { regUndo, clearUndo } from "./src/replace-undo";
 import { regRead, fmtReadPreview } from "./src/read";
 import { buildAutoReadAllInjection, autoReadAllBudget } from "./src/auto-read-all";
+import { clearAutoReadAllComplete } from "./src/auto-read-all-state";
 import type { RMetrics } from "./src/replace-response";
 import type { ReplaceDetails } from "./src/replace";
 import { extractWarnings } from "./src/replace-render";
@@ -103,6 +104,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
       const key = sessionKeyFor(ctx);
+      clearAutoReadAllComplete(key);
       if (key !== undefined) releaseRegistrySession(key);
     } catch (error) {
       console.error("Failed to release anchor registry session:", error);
@@ -113,7 +115,7 @@ export default function (pi: ExtensionAPI): void {
     if (autoReadAll === "off" || autoReadAllInjected) return;
     autoReadAllInjected = true;
     try {
-      const injection = await buildAutoReadAllInjection(ctx.cwd, autoReadAllBudget(ctx.model), autoReadAll, autoReadAllIgnore);
+      const injection = await buildAutoReadAllInjection(ctx.cwd, autoReadAllBudget(ctx.model), autoReadAll, autoReadAllIgnore, sessionKeyFor(ctx));
       if (!injection) return;
       if (ctx.hasUI) ctx.ui.notify(`Auto-read all: attached ${injection.files} file(s) with anchors`, "info");
       return { message: { customType: AUTO_READ_ALL_CUSTOM_TYPE, content: injection.text, display: false } };

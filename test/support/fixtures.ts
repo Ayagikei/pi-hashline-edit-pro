@@ -7,7 +7,7 @@ import register from "../../index";
 import { loadHashStore, shutdownHashStore } from "../../src/hash-store";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
-import { clearAutoReadAllComplete } from "../../src/auto-read-all-state";
+import { clearAllAutoReadAllComplete } from "../../src/auto-read-all-state";
 import { errCode } from "../../src/utils";
 const envRestores: Array<() => void> = [];
 
@@ -15,7 +15,7 @@ afterEach(() => {
   while (envRestores.length > 0) envRestores.pop()!();
   resetRegistryForTests();
   resetBatchStateForTests();
-  clearAutoReadAllComplete();
+  clearAllAutoReadAllComplete();
 });
 
 export async function getWritableTempRoot(): Promise<string> {
@@ -222,7 +222,7 @@ export function getText(result: { content: Array<{ text?: string }> }): string {
   return result.content[0]?.text ?? "";
 }
 export function extractHash(line: string): string {
-  const m = line.match(/([A-Za-z0-9]{4})│/);
+  const m = line.match(/([A-Za-z]{4})│/);
   return m ? m[1]! : line.split("│")[0]!;
 }
 

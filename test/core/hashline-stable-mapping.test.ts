@@ -313,7 +313,7 @@ describe("mapStableHashes - removedHashes edge cases", () => {
     });
 
     expect(result[0]).toBe(oldHashes[0]);
-    expect(result[1]).toMatch(/^[A-Za-z0-9_-]{4}$/);
+    expect(result[1]).toMatch(/^[A-Za-z]{4}$/);
     expect(result[1]).not.toBe(oldHashes[0]);
     expect(result[1]).not.toBe(oldHashes[1]);
     expect(result[1]).not.toBe(oldHashes[2]);

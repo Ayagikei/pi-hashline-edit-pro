@@ -63,9 +63,9 @@ describe("prompts/read.md (model-facing contract)", () => {
     expect(readPrompt).toMatch(/4-character/);
   });
 
-  it("specifies the alphanumeric anchor alphabet", () => {
+  it("specifies the letters-only anchor alphabet", () => {
     expect(readPrompt).toMatch(/4-character/);
-    expect(readPrompt).toContain("alphanumeric");
+    expect(readPrompt).toContain("letters only");
   });
 
   it("documents pagination support", () => {

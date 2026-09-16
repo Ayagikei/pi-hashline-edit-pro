@@ -24,13 +24,27 @@ describe("write-hook findServedHashEcho", () => {
     const result = findServedHashEcho(content, served);
     expect(result).toEqual({ line: 2, hash: "ioor" });
   });
-  it("matches hash at start of line only", () => {
+  it("matches a hash at the start of a row, not inside content", () => {
     const served = new Set(["ATIm"]);
     expect(findServedHashEcho(" xx ATIm│hello\n", served)).toBeUndefined();
     expect(findServedHashEcho("ATIm│hello\n", served)).toEqual({ line: 1, hash: "ATIm" });
   });
   it("handles empty content", () => {
     expect(findServedHashEcho("", new Set(["ATIm"]))).toBeUndefined();
+  });
+  it("matches copied diff-preview rows", () => {
+    const served = new Set(["ATIm"]);
+    expect(findServedHashEcho("+ATIm│hello\n", served)).toEqual({ line: 1, hash: "ATIm" });
+    expect(findServedHashEcho(" ATIm│hello\n", served)).toEqual({ line: 1, hash: "ATIm" });
+    expect(findServedHashEcho("-ATIm│hello\n", served)).toEqual({ line: 1, hash: "ATIm" });
+  });
+  it("matches numbered grep rows", () => {
+    const served = new Set(["ioor"]);
+    expect(findServedHashEcho("12 │ ioor│second\n", served)).toEqual({ line: 1, hash: "ioor" });
+    expect(findServedHashEcho("  3 │ ioor│second\n", served)).toEqual({ line: 1, hash: "ioor" });
+  });
+  it("ignores padded deletion rows without a hash", () => {
+    expect(findServedHashEcho("-    │hello\n", new Set(["ATIm"]))).toBeUndefined();
   });
 });
 

@@ -4,6 +4,7 @@ import {
   _lineHashesPure,
   ANCHOR_LEN,
   HASH_SEP,
+  HASH_CLASS,
   changedRange,
 } from "./hashline";
 import { MAX_DIFF_INPUT_BYTES, DEDUP_ANCHOR } from "./constants";
@@ -111,7 +112,7 @@ export function spansFromHashes(oldHashes: string[], newHashes: string[]): DiffS
   return spans;
 }
 
-const ANCHORED_DIFF_ROW_RE = /^([+ -])([A-Za-z0-9]{4})│/;
+const ANCHORED_DIFF_ROW_RE = new RegExp(`^([+ -])(${HASH_CLASS})│`);
 
 export function disambiguateDuplicateAnchors(diff: string): string {
   if (!diff.includes("│")) return diff;

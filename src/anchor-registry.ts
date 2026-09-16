@@ -659,6 +659,7 @@ export function alignOwnershipWithSpans(
   const state = options?.shadow ? shadowStateFrom(current()!) : current()!;
   const freed: { anchor: string; checksum: string }[] = [];
   const minted: MintedAt[] = [];
+  const reused = new Set<string>();
   const log = (event: RegistryEvent): void => {
     if (!options?.shadow) appendEvent(event);
   };
@@ -671,14 +672,12 @@ export function alignOwnershipWithSpans(
     const start = span.start + offset;
     const end = span.end + offset;
     const spanLength = end - start + 1;
-    const spanFreed: { anchor: string; checksum: string }[] = [];
     for (let i = start; i <= end; i++) {
       const anchor = anchors[i]!;
       if (state.owned.has(anchor)) {
         state.owned.delete(anchor);
         const checksum = prevChecksums[i - offset] ?? "";
-        spanFreed.push({ anchor, checksum });
-        freed.push(spanFreed[spanFreed.length - 1]!);
+        freed.push({ anchor, checksum });
       }
     }
     const replacement: (string | undefined)[] = new Array(span.replacementCount);
@@ -690,10 +689,7 @@ export function alignOwnershipWithSpans(
         (!state.owned.has(positional) || state.owned.get(positional)!.path === path)
       ) {
         replacement[k] = positional;
-        const freedAt = freed.findIndex((candidate) => candidate.anchor === positional);
-        if (freedAt >= 0) freed.splice(freedAt, 1);
-        const pooledAt = spanFreed.findIndex((candidate) => candidate.anchor === positional);
-        if (pooledAt >= 0) spanFreed.splice(pooledAt, 1);
+        reused.add(positional);
       }
     }
     for (let k = 0; k < span.replacementCount; k++) {
@@ -714,8 +710,9 @@ export function alignOwnershipWithSpans(
   }
   const rows: [string, string][] = minted.map((m) => [m.anchor, m.checksum]);
   if (rows.length > 0) log({ kind: "allocate", path, rows });
-  if (freed.length > 0) log({ kind: "free", path, anchors: freed.map((f) => f.anchor) });
-  return { anchors, freed: freed.map((f) => f.anchor), minted: minted.map((m) => m.anchor) };
+  const retained = freed.filter((candidate) => !reused.has(candidate.anchor));
+  if (retained.length > 0) log({ kind: "free", path, anchors: retained.map((f) => f.anchor) });
+  return { anchors, freed: retained.map((f) => f.anchor), minted: minted.map((m) => m.anchor) };
 }
 
 export function alignOwnership(

@@ -117,7 +117,6 @@ interface Prepared {
   get: (...params: SqlParams) => Record<string, unknown> | undefined;
   getState: (...params: SqlParams) => Record<string, unknown> | undefined;
   allPaths: (...params: SqlParams) => Record<string, unknown>[];
-  allHashes: (...params: SqlParams) => Record<string, unknown>[];
   deleteOne: (...params: SqlParams) => void;
   upsert: (...params: SqlParams) => void;
   undoUpsert: (...params: SqlParams) => void;
@@ -205,7 +204,6 @@ function buildStore(db: RawDb): { db: RawDb; stmts: Prepared } {
   const getStmt = db.prepare("SELECT hashes FROM snapshots WHERE path = ? AND checksum = ? AND line_count = ?");
   const getStateStmt = db.prepare("SELECT checksum, hashes, line_checksums FROM snapshots WHERE path = ?");
   const allStmt = db.prepare("SELECT path FROM snapshots UNION SELECT path FROM undo");
-  const allHashesStmt = db.prepare("SELECT path, hashes FROM snapshots");
   const delStmt = db.prepare("DELETE FROM snapshots WHERE path = ?");
   const upsertStmt = db.prepare(
     "INSERT INTO snapshots (path, checksum, line_count, hashes, line_checksums, updated_at) VALUES (?, ?, ?, ?, ?, ?) " +
@@ -224,8 +222,7 @@ function buildStore(db: RawDb): { db: RawDb; stmts: Prepared } {
   const stmts: Prepared = {
     get: (...params) => getStmt.get(...params) as Record<string, unknown> | undefined,
     getState: (...params) => getStateStmt.get(...params) as Record<string, unknown> | undefined,
-    allPaths: (...params) => allStmt.all(...params) as Record<string, unknown>[],
-    allHashes: (...params) => allHashesStmt.all(...params) as Record<string, unknown>[],
+    allPaths: (...params) => withBusyRetry(() => allStmt.all(...params) as Record<string, unknown>[]),
     deleteOne: retriedWrite(delStmt),
     upsert: retriedWrite(upsertStmt),
     undoUpsert: retriedWrite(undoUpsertStmt),

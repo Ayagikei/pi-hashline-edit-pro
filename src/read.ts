@@ -19,7 +19,7 @@ import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-
 import { valAccess } from "./validation";
 import { readConfig } from "./config";
 import { resolveTarget } from "./fs-write";
-import { withAnchorSession, servedForPath } from "./anchor-registry";
+import { withAnchorSession, servedForPath, sessionKeyFor } from "./anchor-registry";
 import { serveRows } from "./served";
 import { getAutoReadAllSnapshot } from "./auto-read-all-state";
 import { Text } from "@earendil-works/pi-tui";
@@ -217,7 +217,7 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
                 if (autoReadAllMode !== "off") {
                   const canonical = await resolveTarget(absolutePath).catch(() => undefined);
                   if (canonical !== undefined) {
-                    const stored = getAutoReadAllSnapshot(canonical);
+                    const stored = getAutoReadAllSnapshot(sessionKeyFor(ctx), canonical);
                     if (stored !== undefined) {
                       const current = await safeSnapId(canonical, "auto-read-all guard");
                       if (current !== undefined && current === stored) {

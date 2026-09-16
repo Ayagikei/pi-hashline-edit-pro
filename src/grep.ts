@@ -3,11 +3,12 @@ import { formatSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult
 import { Type } from "typebox";
 import { stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, win32 } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tryReadNormFile } from "./file-reader";
 import { globToRegex } from "./glob";
-import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP } from "./hashline";
+import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP, HASH_CLASS } from "./hashline";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX, MAX_GREP_LINE_BYTES } from "./constants";
 import { toCwd, toDisplayPath } from "./paths";
 import { loadP, loadGuide } from "./prompts";
@@ -276,10 +277,9 @@ export async function resolveRgPath(): Promise<string> {
     const { createRequire } = await import("node:module");
     const require = createRequire(import.meta.url);
     const pkgPath = require.resolve("@earendil-works/pi-coding-agent/package.json");
-    const { dirname } = await import("node:path");
     const piDir = dirname(pkgPath);
     const toolsManagerPath = join(piDir, "dist/utils/tools-manager.js");
-    const mod = await import("file://" + toolsManagerPath);
+    const mod = await import(pathToFileURL(toolsManagerPath).href);
     if (mod.ensureTool) {
       const p = await mod.ensureTool("rg", true);
       if (p) { cachedRgPath = p; return p; }
@@ -468,7 +468,7 @@ function highlightMatches(text: string, regex: RegExp, theme: FgT): string {
   return out + text.slice(last);
 }
 
-const ANCHORED_ROW_RE = /^[A-Za-z0-9]{4}│/;
+const ANCHORED_ROW_RE = new RegExp(`^${HASH_CLASS}${HASH_SEP}`);
 
 function highlightHitRow(row: string, highlight: RegExp, theme: FgT): string {
   const anchored = row.match(ANCHORED_ROW_RE);

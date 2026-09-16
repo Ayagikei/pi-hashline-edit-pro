@@ -1,4 +1,5 @@
 import { NUL_CONTENT_MSG } from "./constants";
+import { HASH_CLASS } from "./hashline/alphabet";
 
 export function isRec(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -141,8 +142,10 @@ export function getCached<K, V>(map: Map<K, V>, key: K, compute: (key: K) => V):
 	return v;
 }
 
+const HASH_ROW_RE = new RegExp(`^${HASH_CLASS}│`);
+
 export function isHashRow(line: string): boolean {
-	return /^[A-Za-z0-9]{4}│/.test(line);
+	return HASH_ROW_RE.test(line);
 }
 
 export function gutterWidth(max: number, fallback: number): number {
