@@ -16,22 +16,6 @@ export const HASH_RUN = `[${LETTERS}]{${HASH_LEN},${HASH_LEN + 1}}`;
 
 export const HASH_RE = new RegExp(`^${HASH_CLASS}$`);
 
-let indexByAnchor: Map<string, number> | undefined;
-
-function reverseIndex(): Map<string, number> {
-  if (!indexByAnchor) {
-    indexByAnchor = new Map();
-    for (let i = 0; i < ANCHOR_COUNT; i++) {
-      indexByAnchor.set(TABLE.slice(i * HASH_LEN, i * HASH_LEN + HASH_LEN), i);
-    }
-  }
-  return indexByAnchor;
-}
-
 export function anchorAt(idx: number): string {
   return TABLE.slice(idx * HASH_LEN, idx * HASH_LEN + HASH_LEN);
-}
-
-export function anchorIndex(hash: string): number {
-  return reverseIndex().get(hash) ?? -1;
 }

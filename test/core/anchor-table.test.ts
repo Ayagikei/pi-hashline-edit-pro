@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import anchorData from "../../src/hashline/anchor-table.json";
-import { ANCHOR_COUNT, HASH_LEN, anchorAt, anchorIndex } from "../../src/hashline/alphabet";
+import { ANCHOR_COUNT, HASH_LEN, anchorAt } from "../../src/hashline/alphabet";
 
 const TABLE: string = anchorData.anchors;
 
@@ -32,13 +32,5 @@ describe("anchor table", () => {
     expect(heads.size).toBe(1360);
     expect(tails.size).toBe(1360);
     expect(heads).toEqual(tails);
-  });
-
-  it("round-trips anchorAt and anchorIndex", () => {
-    for (const idx of [0, 1, 130_000, ANCHOR_COUNT - 2, ANCHOR_COUNT - 1]) {
-      expect(anchorIndex(anchorAt(idx))).toBe(idx);
-    }
-    expect(anchorIndex("qjqj")).toBe(-1);
-    expect(anchorIndex("0000")).toBe(-1);
   });
 });

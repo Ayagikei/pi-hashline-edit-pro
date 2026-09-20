@@ -47,7 +47,7 @@ export type ReplaceDetails = {
   metrics?: RMetrics;
   diffLineNumbers?: (number|undefined)[];
   warnings?: string[];
-  batch?: { id: number; size: number; last: boolean; total: number };
+  batch?: { id: number; size: number; last: boolean; total: number; aborted?: boolean; abortMessage?: string };
 };
 
 export interface PipelineResult {

@@ -23,11 +23,11 @@ import { assertInsertReq, assertReq, normReq } from "./payload-contract";
 import { saveUndo } from "./replace-undo";
 import { buildChanged, buildNoop, type RMetrics, type TResult } from "./replace-response";
 import { serveRows, servedHashesFromDiff } from "./served";
-import { abortIf, assertLineLimit, errCode, isRec, splitLines } from "./utils";
-import { MAX_BYTES } from "./constants";
+import { abortIf, assertByteLimit, assertLineLimit, errCode, isRec, splitLines } from "./utils";
 
 export interface PlannedMember {
   batchKey: number;
+  id: string;
   display: number;
   total: number;
   target: string;
@@ -126,12 +126,18 @@ const batches = new Map<number, BatchState>();
 let nextBatchKey = 1;
 const abortedMembers = new Map<string, { display: number; message: string }>();
 const ABORTED_MEMBERS_LIMIT = 1024;
+const placeholderResults = new Map<string, TResult>();
 
 function markBatchMembersAborted(runtime: BatchState): void {
   const message = abortedBatchMessage(runtime);
   for (const id of runtime.memberIds) {
     abortedMembers.delete(id);
     abortedMembers.set(id, { display: runtime.display, message });
+    const result = placeholderResults.get(id);
+    if (result?.details.batch) {
+      result.details.batch.aborted = true;
+      result.details.batch.abortMessage = message;
+    }
   }
   while (abortedMembers.size > ABORTED_MEMBERS_LIMIT) {
     const oldest = abortedMembers.keys().next().value;
@@ -157,6 +163,7 @@ export function resetBatchStateForTests(): void {
   plan.clear();
   batches.clear();
   abortedMembers.clear();
+  placeholderResults.clear();
   nextBatchKey = 1;
 }
 
@@ -203,7 +210,12 @@ function enforceCap(): void {
     if (oldest === undefined) return;
     const state = batches.get(oldest);
     batches.delete(oldest);
-    if (state) for (const id of state.memberIds) plan.delete(id);
+    if (state) {
+      for (const id of state.memberIds) {
+        plan.delete(id);
+        placeholderResults.delete(id);
+      }
+    }
   }
 }
 
@@ -274,6 +286,7 @@ export async function planAssistantMessage(message: unknown, cwd: string): Promi
     group.forEach((item, index) => {
       plan.set(item.id, {
         batchKey: key,
+        id: item.id,
         display,
         total: finalGroups.length,
         target: item.target,
@@ -521,7 +534,11 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
   if (noop) runtime.noops += 1;
   else runtime.applied += 1;
   runtime.warnings.push(...piece.warnings);
-  if (!input.member.last) return batchPlaceholder(input.member, piece, base.snapshotId);
+  if (!input.member.last) {
+    const placeholder = batchPlaceholder(input.member, piece, base.snapshotId);
+    placeholderResults.set(input.member.id, placeholder);
+    return placeholder;
+  }
   return finishBatch(input.member, input.signal);
 }
 
@@ -633,9 +650,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     assertNotEmpty(base.content, composed);
     assertLineLimit(composed, paths.displayPath, MAX_HASH_LINES);
     const finalBytes = base.bom + restoreEndings(composed, base.ending);
-    if (Buffer.byteLength(finalBytes, "utf-8") > MAX_BYTES) {
-      throw new Error(`[E_FILE_TOO_LARGE] File is too large: ${paths.displayPath} (exceeds the ${MAX_BYTES / (1024 * 1024)}MB size limit). For very large files, use write.`);
-    }
+    assertByteLimit(finalBytes, paths.displayPath);
   } catch (error) {
     discardBatchState(runtime);
     if (error instanceof Error) error.message = withAbortSuffix(error.message, runtime.display);
@@ -786,7 +801,10 @@ export async function finalizeTurn(toolCallIds: string[]): Promise<void> {
   for (const key of keys) {
     const runtime = batches.get(key);
     if (!runtime) continue;
-    for (const id of runtime.memberIds) plan.delete(id);
+    for (const id of runtime.memberIds) {
+      plan.delete(id);
+      placeholderResults.delete(id);
+    }
     batches.delete(key);
   }
 }

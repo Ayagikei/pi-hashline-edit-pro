@@ -10,6 +10,7 @@ import {
   makePrepareArguments,
   truncateToBytes,
   decodeStringArray,
+  assertByteLimit,
 } from "../../src/utils";
 
 describe("isRec", () => {
@@ -466,5 +467,22 @@ describe("decodeStringArray control bytes", () => {
     expect(decodeStringArray('["a' + cr + 'b"]')).toEqual(["a" + cr + "b"]);
     expect(decodeStringArray('["a' + nul + 'b"]')).toEqual(["a" + nul + "b"]);
     expect(decodeStringArray('["a' + backslash + 'qb"]')).toBeUndefined();
+  });
+});
+
+describe("assertByteLimit", () => {
+  it("allows content at the limit and rejects content over it", () => {
+    expect(() => assertByteLimit("abc", "f.txt", 3)).not.toThrow();
+    expect(() => assertByteLimit("abcd", "f.txt", 3)).toThrow(/^\[E_FILE_TOO_LARGE\] File is too large: f\.txt/);
+  });
+
+  it("measures UTF-8 bytes rather than characters", () => {
+    expect(() => assertByteLimit("é", "f.txt", 2)).not.toThrow();
+    expect(() => assertByteLimit("é", "f.txt", 1)).toThrow(/E_FILE_TOO_LARGE/);
+  });
+
+  it("reports the exceeded limit in megabytes", () => {
+    const oneMb = 1024 * 1024;
+    expect(() => assertByteLimit("a".repeat(oneMb + 1), "f.txt", oneMb)).toThrow(/exceeds the 1MB size limit/);
   });
 });

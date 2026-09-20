@@ -49,6 +49,7 @@ describe("same-turn edit batches", () => {
         ctx,
       );
       expect(first.content[0].text).toBe("In batch 1");
+      expect(first.details.batch?.aborted).toBeUndefined();
 
       const second = await editTool.execute(
         "b2",
@@ -1027,6 +1028,7 @@ describe("same-turn edit batches", () => {
         failure = error instanceof Error ? error.message : String(error);
       }
       expect(failure).toBe("[E_OP_ABORTED] Batch 1 aborted: [insert] Call Nr 2 errored [E_BAD_SHAPE]");
+      expect(first.details.batch).toMatchObject({ aborted: true, abortMessage: failure });
       expect(await readFile(path, "utf-8")).toBe("a\nb\nc\n");
     });
   });

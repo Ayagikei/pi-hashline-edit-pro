@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { PipelineResult } from "./replace";
-import { abortIf, errCode, splitLines } from "./utils";
+import { abortIf, assertByteLimit, errCode, splitLines } from "./utils";
 import { DEDUP_ANCHOR } from "./constants";
 import { HASH_SEP } from "./hashline";
 import { buildChanged, buildNoop, type RMeta, type TResult } from "./replace-response";
@@ -70,6 +70,9 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     );
   }
 
+  const finalFileBytes = pipe.bom + restoreEndings(pipe.result, pipe.originalEnding);
+  assertByteLimit(finalFileBytes, path);
+
   if (pipe.hadUtf8DecodeErrors) {
     warnings.push(
       "Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
@@ -112,7 +115,7 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     abortIf(signal);
     await writeAtomic(
       absolutePath,
-      pipe.bom + restoreEndings(pipe.result, pipe.originalEnding),
+      finalFileBytes,
       pipe.identity,
     );
   } catch (error) {

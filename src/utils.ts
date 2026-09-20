@@ -1,4 +1,4 @@
-import { NUL_CONTENT_MSG } from "./constants";
+import { NUL_CONTENT_MSG, MAX_BYTES } from "./constants";
 import { HASH_CLASS } from "./hashline/alphabet";
 
 export function isRec(value: unknown): value is Record<string, unknown> {
@@ -191,6 +191,11 @@ export function clipLine(line: string, maxLen = 200): string {
 export function assertLineLimit(content: string, displayPath: string, limit: number): void {
 	const count = splitLines(content).length;
 	if (count > limit) throw new Error(formatLineLimit(displayPath, limit, count));
+}
+export function assertByteLimit(content: string, displayPath: string, limit = MAX_BYTES): void {
+	if (Buffer.byteLength(content, "utf-8") > limit) {
+		throw new Error(`[E_FILE_TOO_LARGE] File is too large: ${displayPath} (exceeds the ${limit / (1024 * 1024)}MB size limit). For very large files, use write.`);
+	}
 }
 export function lineLimitMoreThanMessage(displayPath: string, limit: number): string {
 	return formatLineLimit(displayPath, limit, undefined);
