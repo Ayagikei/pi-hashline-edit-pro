@@ -284,6 +284,9 @@ describe("buildAutoReadAllInjection", () => {
       expect(injection!.files).toBe(1);
       expect(injection!.omitted).toEqual(["b.txt"]);
       expect(injection!.text).toContain("Not attached: b.txt");
+      const omittedPath = await resolveTarget(join(cwd, "b.txt"));
+      expect(ownersForPath(omittedPath).size).toBe(0);
+      expect(servedForPath(omittedPath)).toBeUndefined();
     } finally {
       await cleanupCwd(cwd);
     }

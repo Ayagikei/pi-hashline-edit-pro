@@ -21,10 +21,21 @@ function collectCodes(dir: string): Set<string> {
   return codes;
 }
 
+function collectFileCodes(file: string): Set<string> {
+  const codes = new Set<string>();
+  for (const match of readFileSync(file, "utf-8").matchAll(codeRe)) {
+    codes.add(match[0]);
+  }
+  return codes;
+}
+
 const readmeCodes = new Set([
   ...readFileSync(join(root, "README.md"), "utf-8").matchAll(codeRe),
 ].map((match) => match[0]));
 const srcCodes = collectCodes(join(root, "src"));
+for (const code of collectFileCodes(join(root, "index.ts"))) {
+  srcCodes.add(code);
+}
 
 describe("error code contract", () => {
   it("documents every error code emitted by src in the README", () => {

@@ -1,5 +1,4 @@
 import { abortIf, clipLine, splitLines } from "../utils";
-import { _lineHashesPure } from "./hash";
 import {
 	valEdit,
 	stripBarePrefixes,

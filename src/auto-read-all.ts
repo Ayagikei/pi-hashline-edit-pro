@@ -388,6 +388,16 @@ export function chunkAutoReadAllSections(sections: string[], maxBytes: number = 
   if (current.length > 0) chunks.push(current.join("\n\n"));
   return chunks;
 }
+
+async function candidateFileBytes(cwd: string, file: string): Promise<number | undefined> {
+  try {
+    const stats = await lstat(resolve(cwd, file));
+    return stats.isFile() ? stats.size : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function renderFile(file: string, cwd: string): Promise<AutoReadAllSection | undefined> {
   try {
     const { normalized, fileHashes, absolutePath } = await readNormFile(file, cwd, { maxLines: MAX_HASH_LINES });
@@ -427,6 +437,13 @@ export async function buildAutoReadAllInjection(cwd: string, budgetBytes: number
   let bytes = 0;
   let completeFiles = 0;
   for (const file of discovery.files) {
+    if (sections.length > 0) {
+      const size = await candidateFileBytes(cwd, file);
+      if (size !== undefined && bytes + size > budgetBytes) {
+        omitted.push(file);
+        continue;
+      }
+    }
     const section = await renderFile(file, cwd);
     if (section === undefined) {
       omitted.push(file);
