@@ -248,7 +248,7 @@ export function regUndo(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
             ],
             details: {
               diff: undoDiff,
-              diffLineNumbers: undoDiffResult.lineNumbers,
+              diffLineNumbers: undoDiffResult.lineNumbers.map((line) => line ?? null),
               patch: patchResult.patch,
               ...(patchResult.truncated ? { patchTruncated: true as const } : {}),
               metrics: buildMetrics({

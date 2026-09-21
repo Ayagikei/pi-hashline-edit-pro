@@ -240,7 +240,7 @@ export function buildChanged(input: SuccessInput, verb = "replaced", diffContext
         editMeta.firstChangedLine ?? baseDiff.firstChangedLine,
       snapshotId,
       metrics,
-      diffLineNumbers: diffResult.lineNumbers,
+      diffLineNumbers: diffResult.lineNumbers.map((line) => line ?? null),
       ...(warnings?.length ? { warnings: [...warnings] } : {}),
     },
   };

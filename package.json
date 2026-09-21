@@ -61,7 +61,7 @@
     "prepublishOnly": "npm run typecheck && npm run lint && npm test"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.0",
+    "@earendil-works/pi-coding-agent": "^0.86.1",
     "@eslint/js": "^10.0.1",
     "@types/node": "^24",
     "@vitest/coverage-v8": "^4.1.11",

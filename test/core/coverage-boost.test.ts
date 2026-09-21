@@ -33,6 +33,7 @@ describe("coverage boost utils", () => {
   it("withLineNumbers adds gutters", () => {
     expect(withLineNumbers("a\nb", [1, 2])).toBe("1 │ a\n2 │ b");
     expect(withLineNumbers("a\nb", [undefined, 5])).toBe("  │ a\n5 │ b");
+    expect(withLineNumbers("a\nb", [null, 5])).toBe("  │ a\n5 │ b");
     expect(withLineNumbers("a\nb\nc", [])).toBe("  │ a\n  │ b\n  │ c");
     expect(withLineNumbers("", [])).toBe("  │ ");
     expect(withLineNumbers("x", [10])).toBe("10 │ x");

@@ -42,7 +42,7 @@ export function colorLines(lines: string[], theme: FgT): string[] {
 		return theme.fg("dim", line);
 	});
 }
-export function toNumberedDiff(diff: string, lineNumbers: (number|undefined)[]): string {
+export function toNumberedDiff(diff: string, lineNumbers: (number | null | undefined)[]): string {
 	return withLineNumbers(diff, lineNumbers);
 }
 
@@ -162,7 +162,7 @@ function extractSummary(text: string | undefined): string | undefined {
 
 const BATCH_HEADER_RE = /^batch \d+:\n/;
 
-function splitBatchHeader(diff: string, lineNumbers: (number | undefined)[] | undefined): { header: string | undefined; body: string; lineNumbers: (number | undefined)[] | undefined } {
+function splitBatchHeader(diff: string, lineNumbers: (number | null | undefined)[] | undefined): { header: string | undefined; body: string; lineNumbers: (number | null | undefined)[] | undefined } {
 	const match = diff.match(BATCH_HEADER_RE);
 	if (!match) return { header: undefined, body: diff, lineNumbers };
 	return { header: match[0]!.slice(0, -1), body: diff.slice(match[0].length), lineNumbers: lineNumbers?.slice(1) };

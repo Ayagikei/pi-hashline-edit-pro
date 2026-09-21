@@ -323,7 +323,7 @@ describe("buildAppliedText", () => {
 	});
 	it("renders the batch header in the warning color without a gutter", () => {
 		const diff = "batch 1:\n +Jkx│chain 0\n-Jkx│chain";
-		const result = buildAppliedText("Successfully replaced in x.", { diff, diffLineNumbers: [undefined, 1, undefined] }, mockTheme, false);
+		const result = buildAppliedText("Successfully replaced in x.", { diff, diffLineNumbers: [null, 1, null] }, mockTheme, false);
 		expect(result).toContain("[warning]batch 1:");
 		expect(result).toContain("1 │  +Jkx│chain 0");
 		expect(result).not.toContain("│ batch 1:");

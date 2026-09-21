@@ -173,14 +173,14 @@ export function numberedRead(text: string, offset: number): string {
 	}).join("\n");
 }
 
-export function withLineNumbers(text: string, numbers: (number|undefined)[]): string {
+export function withLineNumbers(text: string, numbers: (number | null | undefined)[]): string {
 	const lines = text.split("\n");
 	const nums = numbers ?? [];
-	const max = nums.reduce<number>((m, n) => n !== undefined && n > m ? n : m, 0);
+	const max = nums.reduce<number>((m, n) => n !== undefined && n !== null && n > m ? n : m, 0);
 	const width = gutterWidth(max, lines.length);
 	return lines.map((line, i) => {
 		const n = nums[i];
-		const prefix = n !== undefined ? formatGutter(n, width) : blankGutter(width);
+		const prefix = n !== undefined && n !== null ? formatGutter(n, width) : blankGutter(width);
 		return prefix + line;
 	}).join("\n");
 }

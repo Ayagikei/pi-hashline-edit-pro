@@ -754,7 +754,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     await getDiffContextLines(),
   );
   changed.details.diff = `${header}\n${changed.details.diff}`;
-  changed.details.diffLineNumbers?.unshift(undefined);
+  changed.details.diffLineNumbers?.unshift(null);
   try {
     serveRows(runtime.target, resultHashes, splitLines(composed), servedHashesFromDiff(changed.details.diff));
   } catch (error) {

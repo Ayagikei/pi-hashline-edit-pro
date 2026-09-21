@@ -45,7 +45,7 @@ export type ReplaceDetails = {
   snapshotId?: string;
   classification?: "noop";
   metrics?: RMetrics;
-  diffLineNumbers?: (number|undefined)[];
+  diffLineNumbers?: (number | null)[];
   warnings?: string[];
   batch?: { id: number; size: number; last: boolean; total: number; aborted?: boolean; abortMessage?: string };
 };
