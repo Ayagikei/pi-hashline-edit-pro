@@ -96,6 +96,19 @@ describe("compPreview", () => {
       expect((preview as { diff: string }).diff).toContain("BeSR");
     });
   });
+
+  it("previews a method-chained stringified replacement_lines", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.ts"));
+
+      const preview = await compPreview(
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: '["BBB"].map(s => s)' },
+        cwd,
+      );
+      expect(preview).toHaveProperty("diff");
+      expect((preview as { diff: string }).diff).toContain("BBB");
+    });
+  });
 });
 
 describe("renderCall preview", () => {

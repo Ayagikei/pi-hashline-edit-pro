@@ -451,6 +451,28 @@ describe("decodeStringArray leniency", () => {
     expect(decodeStringArray("[,]")).toBeUndefined();
     expect(decodeStringArray('["a", ,]')).toBeUndefined();
   });
+
+  it("unwraps a stringified array followed by a JS method call", () => {
+    expect(decodeStringArray('["alpha", "beta"].map(s => s)')).toEqual(["alpha", "beta"]);
+    expect(decodeStringArray('["alpha", "beta"].slice(0, 1)')).toEqual(["alpha", "beta"]);
+    expect(decodeStringArray(['["alpha"].map(s => s)'])).toEqual(["alpha"]);
+    expect(decodeStringArray('["alpha", "beta",].map(s => s)')).toEqual(["alpha", "beta"]);
+  });
+
+  it("warns for a malformed stringified array of strings", () => {
+    const warnings: string[] = [];
+    expect(decodeStringArray('["alpha", 7].map(s => s)', warnings)).toBeUndefined();
+    expect(decodeStringArray('["alpha", 7', warnings)).toBeUndefined();
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("looked like a JSON array");
+    expect(warnings[1]).toContain("looked like a JSON array");
+  });
+
+  it("does not warn for an envelope line that parseText unwraps", () => {
+    const warnings: string[] = [];
+    expect(decodeStringArray('["  "version": "2.8.4","].', warnings)).toBeUndefined();
+    expect(warnings).toHaveLength(0);
+  });
 });
 
 describe("decodeStringArray control bytes", () => {

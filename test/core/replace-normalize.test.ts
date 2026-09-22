@@ -143,3 +143,48 @@ describe("normReq - top-level shape", () => {
 		expect(input.to).toBe("BeSR");
 	});
 });
+
+describe("normReq - stringified line fields", () => {
+	const glmMapPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\","].map(s => s)';
+	const glmSlicePayload = '["    \\"@cortexkit/aft\\": \\"^0.57.0\\",", "    \\"@cortexkit/aft-pi\\": \\"^0.57.0\\","].slice(0, 3)';
+	const glmMalformedPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\",""]';
+
+	it("unwraps a method-chained stringified array", () => {
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines: glmMapPayload }) as Record<string, unknown>;
+		expect(result.replacement_lines).toEqual(['    "pi-hashline-edit-pro": "^4.3.5",']);
+	});
+
+	it("unwraps a multi-line stringified array with a trailing slice", () => {
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines: glmSlicePayload }) as Record<string, unknown>;
+		expect(result.replacement_lines).toEqual([
+			'    "@cortexkit/aft": "^0.57.0",',
+			'    "@cortexkit/aft-pi": "^0.57.0",',
+		]);
+	});
+
+	it("keeps a malformed stringified array as one warnable element", () => {
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines: glmMalformedPayload }) as Record<string, unknown>;
+		expect(result.replacement_lines).toEqual([glmMalformedPayload]);
+	});
+
+	it("splits a lone string into lines", () => {
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines: "line1\nline2" }) as Record<string, unknown>;
+		expect(result.replacement_lines).toEqual(["line1", "line2"]);
+	});
+
+	it("turns a stringified empty array into a deletion", () => {
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines: "[]" }) as Record<string, unknown>;
+		expect(result.replacement_lines).toEqual([]);
+	});
+
+	it("normalizes the insert lines field the same way", () => {
+		const result = normReq({ anchor: "ATIm", direction: "after", lines: glmMapPayload }) as Record<string, unknown>;
+		expect(result.lines).toEqual(['    "pi-hashline-edit-pro": "^4.3.5",']);
+	});
+
+	it("leaves a valid multi-line array untouched", () => {
+		const replacement_lines = ["a", "b"];
+		const result = normReq({ remove_from: "ATIm", remove_to: "ATIm", replacement_lines }) as Record<string, unknown>;
+		expect(result.replacement_lines).toBe(replacement_lines);
+	});
+});

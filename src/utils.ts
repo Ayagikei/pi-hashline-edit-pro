@@ -36,6 +36,7 @@ export function normalizeRequest(input: unknown): unknown {
   const record: Record<string, unknown> = { ...input };
   normalizeFilePath(record);
   normalizeAnchors(record);
+  normalizeEditLines(record);
   return record;
 }
 
@@ -211,6 +212,47 @@ function stripCodeFence(text: string): string {
 	return fenced ? fenced[1]!.trim() : trimmed;
 }
 
+function arrayLiteralEnd(text: string): number {
+	let depth = 0;
+	let quote: string | undefined;
+	let escaped = false;
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index]!;
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (quote !== undefined) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "[") depth += 1;
+		else if (char === "]") {
+			depth -= 1;
+			if (depth === 0) return index + 1;
+		}
+	}
+	return -1;
+}
+
+function stripTrailingMemberCall(text: string): string {
+	if (!text.startsWith("[")) return text;
+	const end = arrayLiteralEnd(text);
+	if (end < 0) return text;
+	const rest = text.slice(end);
+	if (rest.trim().length === 0) return text;
+	if (!rest.trimStart().startsWith(".") || !rest.trimEnd().endsWith(")")) return text;
+	return text.slice(0, end);
+}
+
 function jsonStringArray(text: string): string[] | undefined {
 	try {
 		const parsed: unknown = JSON.parse(text);
@@ -288,7 +330,7 @@ function scanArrayText(inner: string): string[] | undefined {
 
 function decodeArrayText(value: unknown): string[] | undefined {
 	if (typeof value !== "string") return undefined;
-	const trimmed = stripCodeFence(value);
+	const trimmed = stripTrailingMemberCall(stripCodeFence(value));
 	if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return undefined;
 	const decoded = jsonStringArray(trimmed);
 	if (decoded !== undefined && decoded.length > 0) return decoded;
@@ -298,8 +340,8 @@ function decodeArrayText(value: unknown): string[] | undefined {
 
 function looksLikeStringArray(value: unknown): boolean {
 	if (typeof value !== "string") return false;
-	const trimmed = stripCodeFence(value);
-	return trimmed.endsWith("]") && /^\[\s*['"]/.test(trimmed);
+	const trimmed = stripTrailingMemberCall(stripCodeFence(value));
+	return /^\[\s*['"]/.test(trimmed) && !trimmed.endsWith("].");
 }
 
 export function decodeStringArray(value: unknown, warnings?: string[], label = "replacement_lines"): string[] | undefined {
@@ -317,4 +359,29 @@ export function decodeStringArray(value: unknown, warnings?: string[], label = "
 		warnings?.push(`[W_BAD_SHAPE] ${label} looked like a JSON array but could not be parsed; kept as one literal line: ${clipLine(candidate, 60)}`);
 	}
 	return undefined;
+}
+
+function splitEditLines(text: string): string[] {
+	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
+function normalizeLineFieldValue(value: unknown): string[] | undefined {
+	const candidate = typeof value === "string"
+		? value
+		: Array.isArray(value) && value.length === 1 && typeof value[0] === "string"
+			? value[0]
+			: undefined;
+	if (candidate === undefined) return undefined;
+	const decoded = decodeStringArray(candidate);
+	if (decoded !== undefined) return decoded;
+	if (/^\[\s*\]$/.test(stripTrailingMemberCall(stripCodeFence(candidate)))) return [];
+	return splitEditLines(candidate);
+}
+
+function normalizeEditLines(record: Record<string, unknown>): void {
+	for (const key of ["replacement_lines", "lines"]) {
+		if (!(key in record)) continue;
+		const lines = normalizeLineFieldValue(record[key]);
+		if (lines !== undefined) record[key] = lines;
+	}
 }

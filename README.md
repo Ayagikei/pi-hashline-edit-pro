@@ -73,7 +73,7 @@ Edge cases:
 | --- | --- |
 | `remove_from` | 4-char anchor marking the FIRST line to remove (inclusive). |
 | `remove_to` | 4-char anchor marking the LAST line to remove (inclusive). |
-| `replacement_lines` | Replacement lines, one element per line. Mirror the removed lines exactly, blank lines included: `[]` deletes the range, `[""]` is a single blank line, `["a", ""]` is a line followed by a blank line. Never embed `\n` inside an element. |
+| `replacement_lines` | Replacement lines, one element per line. Mirror the removed lines exactly, blank lines included: `[]` deletes the range, `[""]` is a single blank line, `["a", ""]` is a line followed by a blank line. Never embed `\n` inside an element. A lone string is accepted too: it is split on newlines, and stringified array text is unwrapped. |
 
 Example: read showed `Hasu│old` and `arvm│old2`; to replace both:
 
@@ -89,7 +89,7 @@ Single line: use the same anchor for `remove_from` and `remove_to`. `replace_fro
 
 The request is checked before any file I/O, so a bad request never touches the file.
 
-Common copy-paste slips are fixed automatically: a leftover `anchor│` prefix in `replacement_lines` or the anchor fields (a prefix of 4 to 5 letters before `│`, for example `abde│`), diff-preview rows pasted into the replacement, and a boundary line pasted twice are reported as warnings, while a reversed range, a JSON-array wrapper, and embedded newlines are corrected silently. New lines that re-include a block adjacent to the range are stripped when that block is unique in the file. The whole run is stripped as one unit, so re-including an unchanged block next to the range never duplicates it. Boundary dedup has three modes in `/hashline-config`: `on` strips with a warning, `off` applies edits literally, and `strict` rejects the edit with `[E_BOUNDARY_STRICT]` when any replacement line would be stripped.
+Common copy-paste slips are fixed automatically: a leftover `anchor│` prefix in `replacement_lines` or the anchor fields (a prefix of 4 to 5 letters before `│`, for example `abde│`), diff-preview rows pasted into the replacement, and a boundary line pasted twice are reported as warnings, while a reversed range, stringified array text (even with a trailing JS method call, for example `[…].map(s => s)`), and embedded newlines are corrected silently. New lines that re-include a block adjacent to the range are stripped when that block is unique in the file. The whole run is stripped as one unit, so re-including an unchanged block next to the range never duplicates it. Boundary dedup has three modes in `/hashline-config`: `on` strips with a warning, `off` applies edits literally, and `strict` rejects the edit with `[E_BOUNDARY_STRICT]` when any replacement line would be stripped.
 Content containing a NUL byte (`U+0000`) is rejected with `[E_BAD_SHAPE]` before any file I/O: writing it would make the file binary, so use an empty replacement to delete. This applies to `replace`'s `replacement_lines` and `insert`'s `lines`.
 
 Every line in the removed range must match what was last shown to you. The extension records the `anchor│content` rows it serves (`read` output, `anchor_grep` output, the auto-read block after `write`, the `+anchor│` and ` anchor│` rows of post-edit diffs, the current-range rows of `[E_RANGE_STALE]` feedback, and the context rows of stale-anchor feedback) and verifies the whole range against that record before writing. A line that changed on disk since it was shown, or an anchor that is not owned in this session, refuses the edit with `[E_RANGE_STALE]` or `[E_STALE_ANCHOR]` and returns the current range with fresh anchors, so the retry needs no `read`. An owned anchor enters the served record when its row is shown (after a restart, restored ownership counts as shown), so a file with no owned anchors cannot be edited by anchor at all; call `read` first. An owned line that was never shown — for example beyond an auto-read preview's truncation cap — is refused with `[E_RANGE_STALE]` and returns the current range, so the retry still needs no `read`.
@@ -110,7 +110,7 @@ Batched calls must target disjoint ranges; overlapping ranges, or any failing ca
 | --- | --- |
 | `anchor` | 4-char anchor marking the line next to which the lines go. The anchor line is preserved. A pasted `+Hasu│x` diff row or `anchor│` prefix is stripped automatically with a warning. |
 | `direction` | `"after"` inserts below the anchor line, `"before"` above it. |
-| `lines` | Lines to insert, one element per line. `[""]` is a blank line. Never include the anchor line, and never embed `\n` inside an element. |
+| `lines` | Lines to insert, one element per line. `[""]` is a blank line. Never include the anchor line, and never embed `\n` inside an element. A lone string is split on newlines, and stringified array text is unwrapped. |
 
 Lines are applied literally: nothing is removed, and a line that duplicates its neighbor is kept. `replace`'s boundary anti-duplication never runs for `insert`. Inserting nothing (`lines: []`) reports a noop. To seed an empty file, read it and insert after the `anchor│` empty-line row.
 

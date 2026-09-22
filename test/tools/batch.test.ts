@@ -652,7 +652,7 @@ describe("same-turn edit batches", () => {
       const bRef = anchorFor(text, "b");
 
       const message = assistantMessage([
-        toolCall("g1", "replace", { remove_from: aRef, remove_to: aRef, replacement_lines: "not-an-array" }),
+        toolCall("g1", "replace", { remove_from: aRef, remove_to: aRef, replacement_lines: null }),
         toolCall("g2", "replace", { remove_from: bRef, remove_to: bRef, replacement_lines: ["B"] }),
       ]);
       await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
@@ -661,7 +661,7 @@ describe("same-turn edit batches", () => {
       try {
         await editTool.execute(
           "g1",
-          { remove_from: aRef, remove_to: aRef, replacement_lines: "not-an-array" },
+          { remove_from: aRef, remove_to: aRef, replacement_lines: null },
           undefined,
           undefined,
           ctx,
@@ -968,6 +968,33 @@ describe("same-turn edit batches", () => {
       expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
       expect(second.details.diff).toContain("BETA2");
       expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\nBETA2\nGAMMA\ndelta\n");
+    });
+  });
+
+  it("applies a batch whose member sent a method-chained stringified array", async () => {
+    await withTempFile("sample.txt", "alpha\nbeta\ngamma\ndelta\n", async ({ cwd, path }) => {
+      const { getTool, handlers, ctx } = await setupBatchTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = (await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx)).content[0].text as string;
+      const betaRef = anchorFor(text, "beta");
+      const gammaRef = anchorFor(text, "gamma");
+
+      const firstArgs = { remove_from: betaRef, remove_to: betaRef, replacement_lines: '["BETA"].map(s => s)' };
+      const secondArgs = { remove_from: gammaRef, remove_to: gammaRef, replacement_lines: ["GAMMA"] };
+      const message = assistantMessage([
+        toolCall("m1", "replace", firstArgs),
+        toolCall("m2", "replace", secondArgs),
+      ]);
+      await (handlers.get("message_end")!({ type: "message_end", message }, ctx) as Promise<unknown>);
+
+      const first = await editTool.execute("m1", firstArgs, undefined, undefined, ctx);
+      expect(first.content[0].text).toBe("In batch 1");
+
+      const second = await editTool.execute("m2", secondArgs, undefined, undefined, ctx);
+      expect(second.content[0].text).toContain("Batch 1: 2 edits applied as one commit");
+      expect(second.details.diff).toContain("BETA");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\nGAMMA\ndelta\n");
     });
   });
 

@@ -466,3 +466,70 @@ describe("regReplace", () => {
     await expect(compPreview({ remove_from: "!!!!", remove_to: "!!!!", replacement_lines: ["x"] }, "/tmp", controller.signal)).rejects.toThrow();
   });
 });
+
+describe("regReplace - stringified replacement_lines payloads", () => {
+  const glmMapPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\","].map(s => s)';
+  const glmSlicePayload = '["    \\"@cortexkit/aft\\": \\"^0.57.0\\",", "    \\"@cortexkit/aft-pi\\": \\"^0.57.0\\","].slice(0, 3)';
+  const glmMalformedPayload = '["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\",""]';
+
+  it("writes the intended line for a method-chained stringified array", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: glmMapPayload },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+      expect(result.content[0].text).not.toContain("[W_BAD_SHAPE]");
+      expect(await readFile(path, "utf-8")).toBe('aaa\n    "pi-hashline-edit-pro": "^4.3.5",\nccc\n');
+    });
+  });
+
+  it("writes every line of a method-chained stringified array", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: glmSlicePayload },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+      expect(await readFile(path, "utf-8")).toBe('aaa\n    "@cortexkit/aft": "^0.57.0",\n    "@cortexkit/aft-pi": "^0.57.0",\nccc\n');
+    });
+  });
+
+  it("warns and keeps a malformed stringified array literal", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: glmMalformedPayload },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("[W_BAD_SHAPE]");
+      expect(await readFile(path, "utf-8")).toBe('aaa\n["    \\"pi-hashline-edit-pro\\": \\"^4.3.5\\",""]\nccc\n');
+    });
+  });
+});
