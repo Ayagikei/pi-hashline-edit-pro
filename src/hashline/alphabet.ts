@@ -6,32 +6,16 @@ if (typeof rawAnchors !== "string" || rawAnchors.length === 0 || rawAnchors.leng
 const TABLE: string = rawAnchors;
 export const HASH_LEN = 4;
 export const ANCHOR_COUNT = TABLE.length / HASH_LEN;
-const ALNUM = "A-Za-z0-9";
+const LETTERS = "A-Za-z";
 
-export const ALPH_RE = new RegExp(`^[${ALNUM}]+$`);
+export const ALPH_RE = new RegExp(`^[${LETTERS}]+$`);
 
-export const HASH_CLASS = `[${ALNUM}]{${HASH_LEN}}`;
+export const HASH_CLASS = `[${LETTERS}]{${HASH_LEN}}`;
 
-export const HASH_RUN = `[${ALNUM}]{${HASH_LEN},${HASH_LEN + 1}}`;
+export const HASH_RUN = `[${LETTERS}]{${HASH_LEN},${HASH_LEN + 1}}`;
 
 export const HASH_RE = new RegExp(`^${HASH_CLASS}$`);
 
-let indexByAnchor: Map<string, number> | undefined;
-
-function reverseIndex(): Map<string, number> {
-  if (!indexByAnchor) {
-    indexByAnchor = new Map();
-    for (let i = 0; i < ANCHOR_COUNT; i++) {
-      indexByAnchor.set(TABLE.slice(i * HASH_LEN, i * HASH_LEN + HASH_LEN), i);
-    }
-  }
-  return indexByAnchor;
-}
-
 export function anchorAt(idx: number): string {
   return TABLE.slice(idx * HASH_LEN, idx * HASH_LEN + HASH_LEN);
-}
-
-export function anchorIndex(hash: string): number {
-  return reverseIndex().get(hash) ?? -1;
 }

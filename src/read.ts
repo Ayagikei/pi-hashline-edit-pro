@@ -17,8 +17,11 @@ import { abortIf, makePrepareArguments, numberedRead, visLines, splitLines } fro
 import { loadP, loadGuide } from "./prompts";
 import { withReadPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { valAccess } from "./validation";
-import { markServed as markServedScoped, withAnchorSession } from "./anchor-registry";
-import { buildServedMap } from "./served";
+import { readConfig } from "./config";
+import { resolveTarget } from "./fs-write";
+import { withAnchorSession, servedForPath, sessionKeyFor } from "./anchor-registry";
+import { serveRows } from "./served";
+import { getAutoReadAllSnapshot } from "./auto-read-all-state";
 import { Text } from "@earendil-works/pi-tui";
 const R_DESC = loadP("../prompts/read.md");
 const R_SNIPPET = loadP("../prompts/read-snippet.md");
@@ -210,6 +213,22 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 
 				abortIf(signal);
 				await valAccess(absolutePath, rawPath);
+                const autoReadAllMode = (await readConfig()).autoReadAll ?? "off";
+                if (autoReadAllMode !== "off") {
+                  const canonical = await resolveTarget(absolutePath).catch(() => undefined);
+                  if (canonical !== undefined) {
+                    const stored = getAutoReadAllSnapshot(sessionKeyFor(ctx), canonical);
+                    if (stored !== undefined) {
+                      const current = await safeSnapId(canonical, "auto-read-all guard");
+                      if (current !== undefined && current === stored) {
+                        const served = servedForPath(canonical);
+                        if (served !== undefined && served.size > 0) {
+                          throw new Error(`[E_AUTO_READ_ALL] ${rawPath} is unchanged since this session's start-of-session auto-read, so the attached content is still exact. Read succeeds on files that have changed since the full auto read.`);
+                        }
+                      }
+                    }
+                  }
+                }
 
 				abortIf(signal);
 				const file = await loadFileKindAndText(absolutePath, { maxLines: MAX_HASH_LINES, displayPath: rawPath });
@@ -237,7 +256,7 @@ export function regRead(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FL
 					fileHashes,
 					resolvedPath,
 				);
-				markServedScoped(resolvedPath, buildServedMap(fileHashes, fileLines, preview.servedHashes), new Set(fileHashes));
+				serveRows(resolvedPath, fileHashes, fileLines, preview.servedHashes);
 				const snapshotId = await safeSnapId(absolutePath, "read");
 				const previewText =
 					hadUtf8DecodeErrors

@@ -16,21 +16,3 @@ export function cacheSnapshot(path: string, checksum: string, lineCount: number,
     if (oldest !== undefined) snapshotCache.delete(oldest);
   }
 }
-
-let sessionSeq = 0;
-export const sessionTouched = new Map<string, number>();
-
-export function touchSession(path: string): void {
-  sessionSeq += 1;
-  sessionTouched.delete(path);
-  sessionTouched.set(path, sessionSeq);
-}
-
-export function clearSession(): void {
-  sessionTouched.clear();
-  sessionSeq = 0;
-}
-
-export function forgetSession(path: string): void {
-  sessionTouched.delete(path);
-}

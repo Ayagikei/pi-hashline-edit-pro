@@ -2,32 +2,9 @@ import { describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
-import { useTestHome, withTempDir } from "../support/fixtures";
+import { useTestHome, withTempDir, makePiStub } from "../support/fixtures";
 
 useTestHome();
-function makeFakePi() {
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const tools = new Map<string, unknown>();
-  return {
-    pi: {
-      registerTool(tool: any) {
-        tools.set(tool.name, tool);
-      },
-      registerCommand() {},
-      on(event: string, handler: (...args: unknown[]) => unknown) {
-        handlers.set(event, handler);
-      },
-      getActiveTools() {
-        return [];
-      },
-      setActiveTools() {},
-    } as any,
-    handlers,
-    getTool(name: string) {
-      return tools.get(name);
-    },
-  };
-}
 
 describe("auto-read handler", () => {
   it("appends auto-read content after a successful write", async () => {
@@ -35,7 +12,7 @@ describe("auto-read handler", () => {
       const filePath = join(dir, "test.txt");
       await writeFile(filePath, "hello\nworld\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const handler = handlers.get("tool_result");
@@ -69,7 +46,7 @@ describe("auto-read handler", () => {
       await mkdir(configDir, { recursive: true });
       await writeFile(join(configDir, "config.json"), JSON.stringify({ autoRead: false }), "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const sessionHandler = handlers.get("session_start");
@@ -94,7 +71,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns nothing for non-write tool results", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
 
     const handler = handlers.get("tool_result");
@@ -114,7 +91,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns nothing when the write tool reported an error", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
 
     const handler = handlers.get("tool_result");
@@ -134,7 +111,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns nothing when the input has no path", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
 
     const handler = handlers.get("tool_result");
@@ -158,7 +135,7 @@ describe("auto-read handler", () => {
       const filePath = join(dir, "empty.txt");
       await writeFile(filePath, "", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const handler = handlers.get("tool_result");
@@ -187,7 +164,7 @@ describe("auto-read handler", () => {
       const filePath = join(dir, "noop.txt");
       await writeFile(filePath, "hello\nworld\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const handler = handlers.get("tool_result");
@@ -209,7 +186,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns an auto-read failure notice when the file cannot be read", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
 
     const handler = handlers.get("tool_result");
@@ -238,7 +215,7 @@ describe("auto-read handler", () => {
       const filePath = join(dir, "session.txt");
       await writeFile(filePath, "hello\nworld\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const sessionStart = handlers.get("session_start");
@@ -265,7 +242,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns only the diff for a replace with auto-read on (no anchors block)", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
     const handler = handlers.get("tool_result");
     const diff = " aaa\n-   │bbb\n+XYZ│BBB\n ccc";
@@ -287,7 +264,7 @@ describe("auto-read handler", () => {
   });
 
   it("returns only the diff for an undo_last_change with auto-read on (no anchors block)", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
     const handler = handlers.get("tool_result");
     const diff = " aaa\n-   │BBB\n+XYZ│bbb\n ccc";
@@ -314,7 +291,7 @@ describe("auto-read handler", () => {
       const big = "Q".repeat(60_000);
       await writeFile(filePath, `${big}\nsmall\n`, "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
 
       const handler = handlers.get("tool_result");
@@ -342,7 +319,7 @@ describe("replace diff in model-visible text", () => {
     await withTempDir("auto-read-diff-", async (dir) => {
       await writeFile(join(dir, "diff.txt"), "aaa\nbbb\nccc\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
       const handler = handlers.get("tool_result");
       const diff = " aaa\n-   │bbb\n+XYZ│BBB\n ccc";
@@ -373,7 +350,7 @@ describe("replace diff in model-visible text", () => {
     await withTempDir("auto-read-diff-warn-", async (dir) => {
       await writeFile(join(dir, "warn.txt"), "aaa\nbbb\nccc\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
       const handler = handlers.get("tool_result");
       const diff = " aaa\n-   │bbb\n+XYZ│BBB\n ccc";
@@ -400,7 +377,7 @@ describe("replace diff in model-visible text", () => {
   });
 
   it("leaves the summary untouched when the result carries no diff", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
     const handler = handlers.get("tool_result");
 
@@ -422,7 +399,7 @@ describe("replace diff in model-visible text", () => {
     await withTempDir("auto-read-diff-undo-", async (dir) => {
       await writeFile(join(dir, "undo.txt"), "aaa\nbbb\nccc\n", "utf-8");
 
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
       const handler = handlers.get("tool_result");
       const diff = " aaa\n-   │BBB\n+XYZ│bbb\n ccc";
@@ -450,7 +427,7 @@ describe("replace diff in model-visible text", () => {
   });
 
   it("leaves the undo summary untouched when the result carries no diff", async () => {
-    const { pi, handlers } = makeFakePi();
+    const { pi, handlers } = makePiStub();
     register(pi);
     const handler = handlers.get("tool_result");
 
@@ -473,7 +450,7 @@ describe("replace diff in model-visible text", () => {
       const configDir = join(dir, ".config", "pi-hashline-edit-pro");
       await mkdir(configDir, { recursive: true });
       await writeFile(join(configDir, "config.json"), JSON.stringify({ autoRead: false }), "utf-8");
-      const { pi, handlers } = makeFakePi();
+      const { pi, handlers } = makePiStub();
       register(pi);
       const sessionHandler = handlers.get("session_start");
       await sessionHandler!({}, { getActiveTools: () => [], setActiveTools: () => {}, ui: { notify() {} } });

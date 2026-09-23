@@ -4,12 +4,8 @@ import {
   withTempFile,
   setupIntegrationTest,
   getText,
-  extractHash,
+  anchorFor,
 } from "../support/fixtures";
-
-function hashOf(text: string, content: string): string {
-  return extractHash(text.split("\n").find((l) => l.includes(`│${content}`))!);
-}
 
 describe("noop replace hash stability", () => {
   it("keeps the edited line hash unchanged after a pure noop replace", async () => {
@@ -19,7 +15,7 @@ describe("noop replace hash stability", () => {
       const r1 = getText(
         await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      const hashBefore = hashOf(r1, "bbb");
+      const hashBefore = anchorFor(r1, "bbb");
 
       const result = await editTool.execute(
         "e1",
@@ -36,7 +32,7 @@ describe("noop replace hash stability", () => {
       const r2 = getText(
         await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      expect(hashOf(r2, "bbb")).toBe(hashBefore);
+      expect(anchorFor(r2, "bbb")).toBe(hashBefore);
     });
   });
 
@@ -47,7 +43,7 @@ describe("noop replace hash stability", () => {
       const r1 = getText(
         await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      const hashBefore = hashOf(r1, "bbb");
+      const hashBefore = anchorFor(r1, "bbb");
 
       for (let i = 0; i < 3; i++) {
         await editTool.execute(
@@ -65,7 +61,7 @@ describe("noop replace hash stability", () => {
       const r2 = getText(
         await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      expect(hashOf(r2, "bbb")).toBe(hashBefore);
+      expect(anchorFor(r2, "bbb")).toBe(hashBefore);
     });
   });
 
@@ -76,8 +72,8 @@ describe("noop replace hash stability", () => {
       const r1 = getText(
         await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      const bbbHash = hashOf(r1, "bbb");
-      const dddHash = hashOf(r1, "ddd");
+      const bbbHash = anchorFor(r1, "bbb");
+      const dddHash = anchorFor(r1, "ddd");
 
       const noop = await editTool.execute(
         "e1",
@@ -106,8 +102,8 @@ describe("noop replace hash stability", () => {
       const r2 = getText(
         await readTool.execute("r2", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      expect(hashOf(r2, "bbb")).toBe(bbbHash);
-      expect(hashOf(r2, "DDD")).not.toBe(dddHash);
+      expect(anchorFor(r2, "bbb")).toBe(bbbHash);
+      expect(anchorFor(r2, "DDD")).not.toBe(dddHash);
     });
   });
 
@@ -118,7 +114,7 @@ describe("noop replace hash stability", () => {
       const r1 = getText(
         await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx),
       );
-      const hashBefore = hashOf(r1, "bbb");
+      const hashBefore = anchorFor(r1, "bbb");
 
       const noop = await editTool.execute(
         "e1",

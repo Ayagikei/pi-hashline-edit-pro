@@ -7,21 +7,11 @@ import {
   makeFakePiRegistry,
   setupIntegrationTest,
   withTempFile,
+  toolCall,
+  assistantMessage,
+  anchorFor,
 } from "../support/fixtures";
 import register from "../../index";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
-function anchorFor(readText: string, needle: string): string {
-  return readText.split("\n").find((line) => line.includes(`│${needle}`))!.split("│")[0]!;
-}
-
 async function setupStrictTools(cwd: string) {
   resetRegistryForTests();
   resetBatchStateForTests();
@@ -125,7 +115,7 @@ describe("strict boundary dedup", () => {
         undefined,
         ctx,
       );
-      expect(first.content[0].text).toBe("In batch");
+      expect(first.content[0].text).toBe("In batch 1");
       const failure = await captureFailure(() =>
         editTool.execute(
           "f2",

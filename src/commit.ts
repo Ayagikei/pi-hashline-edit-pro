@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import type { PipelineResult } from "./replace";
-import { abortIf, errCode, splitLines } from "./utils";
+import { abortIf, assertByteLimit, errCode, splitLines } from "./utils";
 import { DEDUP_ANCHOR } from "./constants";
 import { HASH_SEP } from "./hashline";
 import { buildChanged, buildNoop, type RMeta, type TResult } from "./replace-response";
@@ -8,11 +8,10 @@ import { saveUndo } from "./replace-undo";
 import { getDiffContextLines } from "./config";
 import { safeSnapId } from "./file-reader";
 import { writeAtomic } from "./fs-write";
-import { servedHashesFromDiff, buildServedMap } from "./served";
-import { lineHashes } from "./hashline";
-import { hashSpan } from "./replace";
+import { servedHashesFromDiff, serveRows } from "./served";
+import { lineHashes, type AutoFix } from "./hashline";
+import { spanForEdit } from "./replace";
 import { restoreEndings, stripBOM, toLF } from "./normalize";
-import { markServed as markServedScoped } from "./anchor-registry";
 export interface CommitMeta {
   editAnchors?: [string, string];
   path: string;
@@ -22,16 +21,28 @@ export interface CommitMeta {
   verb?: string;
   noopNoun?: string;
   prefixWarnings?: string[];
-  appliedWarnings?: string[];
   foldedAnchorLines?: number;
-  onApplied?: () => void;
-  onNoopDedup?: () => void;
 }
 
 export function boundaryDedupWarning(count: number): string {
   const noun = count === 1 ? "1 line" : `${count} lines`;
   const row = count === 1 ? "row" : "rows";
   return `Boundary dedup: ${noun} not added again (see ${DEDUP_ANCHOR}${HASH_SEP} ${row}).`;
+}
+
+export function boundaryDedupNoopWarning(orders: number[], removedLines: number): string {
+  const noun = removedLines === 1 ? "1 line" : `${removedLines} lines`;
+  if (orders.length === 1) {
+    return `Boundary dedup: edit #${orders[0]!} produced no change (${noun} not added again).`;
+  }
+  return `Boundary dedup: edits ${orders.map((order) => `#${order}`).join(", ")} produced no change (${noun} not added again).`;
+}
+
+export function dedupRowsFromFixes(fixes: AutoFix[]): { removedTexts: string[]; above: string[]; below: string[] } {
+  const sorted = [...fixes].sort((a, b) => a.removedLineIndex - b.removedLineIndex);
+  const above = sorted.filter((fix) => fix.kind === "leading" || fix.kind === "last-new-before").map((fix) => fix.removedLine);
+  const below = sorted.filter((fix) => fix.kind === "trailing" || fix.kind === "first-new-after").map((fix) => fix.removedLine);
+  return { removedTexts: sorted.map((fix) => fix.removedLine), above, below };
 }
 
 export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promise<TResult> {
@@ -41,7 +52,6 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
 
   if (pipe.result === pipe.originalNormalized) {
     const noopSnapshotId = await safeSnapId(absolutePath, "noop edit");
-    if (pipe.hadBoundaryDedup) meta.onNoopDedup?.();
     return buildNoop(
       {
         path,
@@ -60,7 +70,9 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     );
   }
 
-  warnings.push(...(meta.appliedWarnings ?? []));
+  const finalFileBytes = pipe.bom + restoreEndings(pipe.result, pipe.originalEnding);
+  assertByteLimit(finalFileBytes, path);
+
   if (pipe.hadUtf8DecodeErrors) {
     warnings.push(
       "Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.",
@@ -103,14 +115,13 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     abortIf(signal);
     await writeAtomic(
       absolutePath,
-      pipe.bom + restoreEndings(pipe.result, pipe.originalEnding),
+      finalFileBytes,
       pipe.identity,
     );
   } catch (error) {
     await undo.restore();
     throw error;
   }
-  meta.onApplied?.();
   const updatedSnapshotId = await safeSnapId(absolutePath, "post-edit");
 
   const editMeta: RMeta = {
@@ -122,18 +133,14 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     removedLines: pipe.totalRemovedLines,
   };
 
-  const span = meta.editAnchors ? hashSpan(pipe.originalHashes, meta.editAnchors[0], meta.editAnchors[1]) : undefined;
-  const resultCount = splitLines(pipe.result).length;
-  const replacementCount = span ? resultCount - (pipe.originalHashes.length - (span[1] - span[0] + 1)) : 0;
+  const span = meta.editAnchors ? spanForEdit(pipe.originalHashes, meta.editAnchors[0], meta.editAnchors[1], pipe.result) : undefined;
   let resultHashes: string[];
   try {
-    resultHashes = pipe.result === pipe.originalNormalized
-      ? pipe.originalHashes
-      : await lineHashes(pipe.result, mutationTargetPath, {
-        content: pipe.originalNormalized,
-        hashes: pipe.originalHashes,
-        spans: span ? [{ start: span[0], end: span[1], replacementCount }] : undefined,
-      });
+    resultHashes = await lineHashes(pipe.result, mutationTargetPath, {
+      content: pipe.originalNormalized,
+      hashes: pipe.originalHashes,
+      spans: span ? [span] : undefined,
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${detail} File was written; anchor finalization failed. One undo reverts. Call read for fresh anchors.`);
@@ -149,15 +156,11 @@ export async function commitEdit(pipe: PipelineResult, meta: CommitMeta): Promis
     editMeta,
     boundaryDedupAbove: pipe.boundaryDedupAbove,
     boundaryDedupBelow: pipe.boundaryDedupBelow,
-    ...(span ? { spans: [{ start: span[0], end: span[1], replacementCount }] } : {}),
+    ...(span ? { spans: [span] } : {}),
   };
   const changed = buildChanged(successInput, meta.verb, await getDiffContextLines());
   if (changed.details.diff) {
-    markServedScoped(
-      mutationTargetPath,
-      buildServedMap(resultHashes, splitLines(pipe.result), servedHashesFromDiff(changed.details.diff)),
-      new Set(resultHashes),
-    );
+    serveRows(mutationTargetPath, resultHashes, splitLines(pipe.result), servedHashesFromDiff(changed.details.diff));
   }
   return changed;
 }

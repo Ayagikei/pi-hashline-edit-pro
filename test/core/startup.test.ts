@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { withTempDir } from "../support/fixtures";
+import { withTempDir, makePiStub } from "../support/fixtures";
 import { mkdir } from "fs/promises";
 import { join } from "path";
 import { isValidHashList } from "../../src/hash-store/validation";
@@ -23,20 +23,6 @@ async function waitForConfig(done: () => Promise<boolean>): Promise<void> {
   }
   throw new Error("timed out waiting for config write");
 }
-function makeLifecyclePi() {
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const pi = {
-    registerTool() {},
-    registerCommand() {},
-    on(event: string, handler: (...args: unknown[]) => unknown) {
-      handlers.set(event, handler);
-    },
-    getActiveTools: () => [],
-    setActiveTools() {},
-  } as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
-  return { pi, handlers };
-}
-
 describe("startup non-blocking prune", () => {
   it("session_start returns before pruneMissing finishes", async () => {
     await withTempDir("startup-prune-", async dir => {
@@ -51,7 +37,7 @@ describe("startup non-blocking prune", () => {
           store.stmts.upsert(`/tmp/nonexistent-${i}-${Date.now()}`, "chk", 1, JSON.stringify(["abc"]), "", Date.now());
         }
         shutdownHashStore();
-        const { pi, handlers } = makeLifecyclePi();
+        const { pi, handlers } = makePiStub();
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -109,7 +95,7 @@ describe("grep huge quantifier guard", () => {
     await withTempDir("startup-grep-", async dir => {
       const { setupIntegrationTest } = await import("../support/fixtures");
       const { getTool } = setupIntegrationTest(dir);
-      const { pi } = makeLifecyclePi();
+      const { pi } = makePiStub();
       const { default: register } = await import("../../index");
       register(pi);
       const grepTool = getTool("anchor_grep");
@@ -118,42 +104,6 @@ describe("grep huge quantifier guard", () => {
   });
 });
 
-function makeTrackingPi(initialTools: string[]) {
-  let active = [...initialTools];
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const pi = {
-    registerTool() {},
-    registerCommand() {},
-    on(event: string, handler: (...args: unknown[]) => unknown) {
-      handlers.set(event, handler);
-    },
-    getActiveTools: () => [...active],
-    setActiveTools(names: string[]) {
-      active = [...names];
-    },
-  } as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
-  return { pi, handlers, getActive: () => [...active] };
-}
-
-function makeCommandPi(initialTools: string[]) {
-  let active = [...initialTools];
-  const commands = new Map<string, { description: string; handler: (...args: unknown[]) => unknown }>();
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const pi = {
-    registerTool() {},
-    registerCommand(name: string, def: { description: string; handler: (...args: unknown[]) => unknown }) {
-      commands.set(name, def);
-    },
-    on(event: string, handler: (...args: unknown[]) => unknown) {
-      handlers.set(event, handler);
-    },
-    getActiveTools: () => [...active],
-    setActiveTools(names: string[]) {
-      active = [...names];
-    },
-  } as unknown as import("@earendil-works/pi-coding-agent").ExtensionAPI;
-  return { pi, commands, handlers, getActive: () => [...active] };
-}
 
 describe("anchor_grep default", () => {
   it("session_start keeps anchor_grep by default and disables the built-in grep", async () => {
@@ -163,7 +113,7 @@ describe("anchor_grep default", () => {
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, handlers, getActive } = makeTrackingPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
+        const { pi, handlers, getActive } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -192,7 +142,7 @@ describe("anchor_grep default", () => {
           join(home, ".config", "pi-hashline-edit-pro", "config.json"),
           JSON.stringify({ autoRead: true, anchorGrepEnabled: true }),
         );
-        const { pi, handlers, getActive } = makeTrackingPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
+        const { pi, handlers, getActive } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -215,7 +165,7 @@ describe("anchor_grep default", () => {
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, commands, handlers, getActive } = makeCommandPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
+        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -223,6 +173,8 @@ describe("anchor_grep default", () => {
         expect(getActive()).not.toContain("grep");
         expect(getActive()).toContain("anchor_grep");
         const overlay = await openConfigOverlay(commands, dir);
+        overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput(" ");
@@ -248,7 +200,7 @@ describe("anchor_grep default", () => {
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, commands, handlers, getActive } = makeCommandPi(["read", "replace", "insert", "anchor_grep", "undo_last_change"]);
+        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "insert", "anchor_grep", "undo_last_change"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -256,6 +208,8 @@ describe("anchor_grep default", () => {
         expect(getActive()).not.toContain("grep");
         expect(getActive()).toContain("anchor_grep");
         const overlay = await openConfigOverlay(commands, dir);
+        overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput(" ");
@@ -284,7 +238,7 @@ describe("hashline-config overlay rendering", () => {
       vi.stubEnv("XDG_CONFIG_HOME", "");
       vi.stubEnv("PI_HASHLINE_DEBUG", "1");
       try {
-        const { pi, commands, handlers } = makeCommandPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
+        const { pi, commands, handlers } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change", "edit"]);
         const { default: register } = await import("../../index");
         register(pi);
         const notify = vi.fn();
@@ -301,6 +255,7 @@ describe("hashline-config overlay rendering", () => {
         expect(lines.filter((line) => line.includes("[x]")).length).toBe(2);
         expect(lines.filter((line) => line.includes("[ ]")).length).toBe(2);
         expect(lines.filter((line) => line.includes("[on]")).length).toBe(1);
+        expect(lines.filter((line) => line.includes("[off]")).length).toBe(1);
         overlay.handleInput("k");
         expect(overlay.render(60).find((line) => line.includes("Boundary dedup"))!).toContain("> ");
         overlay.handleInput("j");
@@ -323,7 +278,7 @@ describe("hashline-config overlay rendering", () => {
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, commands, handlers, getActive } = makeCommandPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
+        const { pi, commands, handlers, getActive } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -333,6 +288,11 @@ describe("hashline-config overlay rendering", () => {
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).autoRead === false);
 
+        overlay.handleInput("j");
+        overlay.handleInput(" ");
+        await waitForConfig(async () => (await readConfig()).autoReadAll === "on");
+
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput(" ");
@@ -355,6 +315,7 @@ describe("hashline-config overlay rendering", () => {
         const config = await readConfig();
         expect(config.autoRead).toBe(false);
         expect(config.anchorGrepEnabled).toBe(false);
+        expect(config.autoReadAll).toBe("on");
         expect(config.requirePath).toBe(true);
         expect(config.strictInput).toBe(true);
         expect(config.boundaryDedupMode).toBe("off");
@@ -376,7 +337,7 @@ describe("hashline-config overlay rendering", () => {
       vi.stubEnv("HOME", home);
       vi.stubEnv("XDG_CONFIG_HOME", "");
       try {
-        const { pi, commands, handlers } = makeCommandPi(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
+        const { pi, commands, handlers } = makePiStub(["read", "replace", "insert", "grep", "anchor_grep", "undo_last_change"]);
         const { default: register } = await import("../../index");
         register(pi);
         const sessionStart = handlers.get("session_start") as (a: unknown, b: unknown) => Promise<void>;
@@ -384,15 +345,21 @@ describe("hashline-config overlay rendering", () => {
         const overlay = await openConfigOverlay(commands, dir);
 
         overlay.handleInput("j");
+        overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput("+");
         await waitForConfig(async () => (await readConfig()).diffContextLines === 2);
         overlay.handleInput("-");
         await waitForConfig(async () => (await readConfig()).diffContextLines === 1);
 
         overlay.handleInput("k");
+        overlay.handleInput("k");
+        overlay.handleInput("k");
         overlay.handleInput(" ");
         await waitForConfig(async () => (await readConfig()).autoRead === false);
         await new Promise((resolve) => setTimeout(resolve, 250));
+        overlay.handleInput("j");
+        overlay.handleInput("j");
         overlay.handleInput("j");
         overlay.handleInput("+");
         overlay.handleInput("-");

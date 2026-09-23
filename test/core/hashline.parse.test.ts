@@ -9,13 +9,13 @@ describe("parseHashRef", () => {
 
 	it("rejects trailing content after the anchor", () => {
 		expect(() => parseHashRef("ATIm:const x = 1;")).toThrow(
-			/Expected a 4-char alphanumeric anchor/,
+			/Expected a 4-character anchor/,
 		);
 	});
 
 	it("rejects a full anchor│content line copied into remove_from/remove_to", () => {
 		expect(() => parseHashRef("ATIm│const x = 1;")).toThrow(
-			/use only the 4-char anchor, drop everything from "│" onward/,
+			/use only the 4-character anchor, drop everything from "│" onward/,
 		);
 	});
 	it("rejects leading >>> markers (strict mode: no marker stripping)", () => {
@@ -43,6 +43,9 @@ describe("parseHashRef", () => {
 
 	it("rejects malformed anchors with E_BAD_REF", () => {
 		expect(() => parseHashRef("invalid")).toThrow(/^\[E_BAD_REF\]/);
+	});
+	it("rejects anchors containing digits because anchors are letters only", () => {
+		expect(() => parseHashRef("A1bc")).toThrow(/^\[E_BAD_REF\]/);
 	});
 
 	it("rejects legacy LINE#HASH format", () => {
@@ -93,23 +96,12 @@ describe("parseText", () => {
 		expect(parseText(["", ""])).toEqual(["", ""]);
 	});
 
-	it("splits elements containing embedded newlines and reports a warning", () => {
-		const warnings: string[] = [];
-		expect(parseText(["a\r\nb\rc"], warnings)).toEqual(["a", "b", "c"]);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toMatch(/contained embedded newlines/);
-	});
-	it("warns for plain \n embedded newlines without carriage returns", () => {
-		const warnings: string[] = [];
-		expect(parseText(["a\nb\nc"], warnings)).toEqual(["a", "b", "c"]);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toMatch(/contained embedded newlines/);
+	it("splits elements containing embedded newlines", () => {
+		expect(parseText(["a\r\nb\rc"])).toEqual(["a", "b", "c"]);
 	});
 
-	it("does not warn when no element contains embedded newlines", () => {
-		const warnings: string[] = [];
-		parseText(["a", "b"], warnings);
-		expect(warnings).toHaveLength(0);
+	it("splits plain \n embedded newlines without carriage returns", () => {
+		expect(parseText(["a\nb\nc"])).toEqual(["a", "b", "c"]);
 	});
 
 	it("preserves '# keep me' comment lines (no autocorrection)", () => {
@@ -137,35 +129,23 @@ describe("parseText", () => {
 });
 
 describe("parseText json-envelope autocorrect", () => {
-	it("unwraps a JSON-array-wrapped element from a mis-serialized tool call and warns", () => {
-		const warnings: string[] = [];
-		expect(parseText(['["  "version": "2.8.4","].'], warnings)).toEqual(['  "version": "2.8.4",']);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toMatch(/JSON array syntax/);
+	it("unwraps a JSON-array-wrapped element from a mis-serialized tool call", () => {
+		expect(parseText(['["  "version": "2.8.4","].'])).toEqual(['  "version": "2.8.4",']);
 	});
 
 	it("leaves valid JSON array lines alone", () => {
-		const warnings: string[] = [];
-		expect(parseText(['["a", "b"]'], warnings)).toEqual(['["a", "b"]']);
-		expect(warnings).toHaveLength(0);
+		expect(parseText(['["a", "b"]'])).toEqual(['["a", "b"]']);
 	});
 
 	it("leaves valid JSON array lines with a trailing dot alone when they parse", () => {
-		const warnings: string[] = [];
-		expect(parseText(['["a", "b"].'], warnings)).toEqual(['["a", "b"].']);
-		expect(warnings).toHaveLength(0);
+		expect(parseText(['["a", "b"].'])).toEqual(['["a", "b"].']);
 	});
 
 	it("unwraps a single-string wrapper with a trailing dot and decodes escapes", () => {
-		const warnings: string[] = [];
-		expect(parseText(['["tab\\tend"].'], warnings)).toEqual(["tab\tend"]);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toMatch(/JSON array syntax/);
+		expect(parseText(['["tab\\tend"].'])).toEqual(["tab\tend"]);
 	});
 
 	it("unwraps a single-string wrapper without escapes", () => {
-		const warnings: string[] = [];
-		expect(parseText(['["hello"].'], warnings)).toEqual(["hello"]);
-		expect(warnings).toHaveLength(1);
+		expect(parseText(['["hello"].'])).toEqual(["hello"]);
 	});
 });

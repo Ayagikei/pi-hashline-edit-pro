@@ -2,7 +2,7 @@ import { formatSize, DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import type { NEdit } from "./hashline";
 import { HASH_SEP } from "./hashline";
 import type { ReplaceDetails } from "./replace";
-import { genDiff, genPatch, type DiffSpan } from "./replace-diff";
+import { genDiff, genPatch, fmtDedupRow, type DiffSpan } from "./replace-diff";
 import { visLines, clipLine } from "./utils";
 import { DEDUP_ANCHOR } from "./constants";
 
@@ -106,7 +106,7 @@ export function buildNoop(input: NoopInput, noopNoun = "Replacement"): TResult {
 		: "The edit produced identical content.";
 	const dedupNote =
 		boundaryRemovedLines !== undefined && boundaryRemovedLines > 0
-			? `\nBoundary dedup removed ${boundaryRemovedLines} line(s); resend the same edit to apply it literally.`
+			? `\nBoundary dedup removed ${boundaryRemovedLines} line(s) that duplicated adjacent lines.`
 			: "";
 
 	const text = `No changes made to ${path}\nClassification: noop\n${noopDetailsText}${dedupNote}${warnBlock(warnings)}`;
@@ -131,13 +131,7 @@ export function buildNoop(input: NoopInput, noopNoun = "Replacement"): TResult {
 		},
 	};
 }
-export function fmtDedupRow(line: string): string {
-  const row = `${DEDUP_ANCHOR}${HASH_SEP}${line}`;
-  if (Buffer.byteLength(row, "utf-8") <= DEFAULT_MAX_BYTES) return row;
-  const size = formatSize(Buffer.byteLength(row, "utf-8"));
-  const limit = formatSize(DEFAULT_MAX_BYTES);
-  return `${DEDUP_ANCHOR}${HASH_SEP}[Row is ${size}, exceeds ${limit}; content not shown. Use read to see the full line.]`;
-}
+export { fmtDedupRow };
 
 export function isDedupRow(line: string): boolean {
   return line.startsWith(`${DEDUP_ANCHOR}${HASH_SEP}`);
@@ -147,9 +141,42 @@ export function isChangeRow(line: string): boolean {
   return line.startsWith("+") || line.startsWith("-");
 }
 
-export function withDedupRows(diff: string, lineNumbers: (number | undefined)[], above: string[] | undefined, below: string[] | undefined): { diff: string; lineNumbers: (number | undefined)[] } {
-  const top = (above ?? []).map(fmtDedupRow);
-  const bottom = (below ?? []).map(fmtDedupRow);
+function capDedupRows(rows: string[], budget: number): { rows: string[]; bytes: number; omitted: number } {
+  const kept: string[] = [];
+  let bytes = 0;
+  for (const row of rows) {
+    const rowBytes = Buffer.byteLength(row, "utf-8") + 1;
+    if (bytes + rowBytes > budget) break;
+    kept.push(row);
+    bytes += rowBytes;
+  }
+  return { rows: kept, bytes, omitted: rows.length - kept.length };
+}
+
+function dedupOmissionNote(omitted: number, maxBytes: number): string {
+  return fmtDedupRow(`[${omitted} line(s) not shown again; output capped at ${formatSize(maxBytes)}.]`);
+}
+
+export function withDedupRows(diff: string, lineNumbers: (number | undefined)[], above: string[] | undefined, below: string[] | undefined, maxBytes = DEFAULT_MAX_BYTES): { diff: string; lineNumbers: (number | undefined)[] } {
+  const topAll = (above ?? []).map(fmtDedupRow);
+  const bottomAll = (below ?? []).map(fmtDedupRow);
+  if (topAll.length === 0 && bottomAll.length === 0) return { diff, lineNumbers };
+  const usedBytes = Buffer.byteLength(diff, "utf-8");
+  const fullBudget = Math.max(0, maxBytes - usedBytes);
+  const initialTop = capDedupRows(topAll, fullBudget);
+  const initialBottom = capDedupRows(bottomAll, Math.max(0, fullBudget - initialTop.bytes));
+  const anyOmitted = initialTop.omitted + initialBottom.omitted > 0;
+  const reserved = anyOmitted ? Buffer.byteLength(dedupOmissionNote(topAll.length + bottomAll.length, maxBytes), "utf-8") + 1 : 0;
+  const budget = Math.max(0, fullBudget - reserved);
+  const topCapped = anyOmitted ? capDedupRows(topAll, budget) : initialTop;
+  const bottomCapped = anyOmitted ? capDedupRows(bottomAll, Math.max(0, budget - topCapped.bytes)) : initialBottom;
+  const top = topCapped.rows;
+  const bottom = [...bottomCapped.rows];
+  const omitted = topCapped.omitted + bottomCapped.omitted;
+  if (omitted > 0) {
+    const note = dedupOmissionNote(omitted, maxBytes);
+    if (usedBytes + topCapped.bytes + bottomCapped.bytes + Buffer.byteLength(note, "utf-8") + 1 <= maxBytes) bottom.push(note);
+  }
   if (top.length === 0 && bottom.length === 0) return { diff, lineNumbers };
   if (diff.length === 0) return { diff: [...top, ...bottom].join("\n"), lineNumbers: [...lineNumbers, ...[...top, ...bottom].map(() => undefined)] };
   const lines = diff.split("\n");
@@ -175,7 +202,9 @@ export function buildChanged(input: SuccessInput, verb = "replaced", diffContext
   const { path, result, warnings, snapshotId, originalNormalized, originalHashes, editMeta, resultHashes, boundaryDedupAbove, boundaryDedupBelow, spans } = input;
   const resultLines = visLines(result);
   const baseDiff = genDiff(originalNormalized, result, diffContextLines, resultHashes, originalHashes, undefined, spans);
-  const diffResult = withDedupRows(baseDiff.diff, baseDiff.lineNumbers, boundaryDedupAbove, boundaryDedupBelow);
+  const diffResult = baseDiff.spanDedupEmitted
+    ? baseDiff
+    : withDedupRows(baseDiff.diff, baseDiff.lineNumbers, boundaryDedupAbove, boundaryDedupBelow);
   const addedLines = editMeta.addedLines;
   const removedLines = editMeta.removedLines;
   const warningsBlock = warnBlock(warnings);
@@ -211,7 +240,7 @@ export function buildChanged(input: SuccessInput, verb = "replaced", diffContext
         editMeta.firstChangedLine ?? baseDiff.firstChangedLine,
       snapshotId,
       metrics,
-      diffLineNumbers: diffResult.lineNumbers,
+      diffLineNumbers: diffResult.lineNumbers.map((line) => line ?? null),
       ...(warnings?.length ? { warnings: [...warnings] } : {}),
     },
   };

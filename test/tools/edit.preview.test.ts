@@ -96,6 +96,19 @@ describe("compPreview", () => {
       expect((preview as { diff: string }).diff).toContain("BeSR");
     });
   });
+
+  it("previews a method-chained stringified replacement_lines", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.ts"));
+
+      const preview = await compPreview(
+        { remove_from: hashes[1]!, remove_to: hashes[1]!, replacement_lines: '["BBB"].map(s => s)' },
+        cwd,
+      );
+      expect(preview).toHaveProperty("diff");
+      expect((preview as { diff: string }).diff).toContain("BBB");
+    });
+  });
 });
 
 describe("renderCall preview", () => {
@@ -311,6 +324,20 @@ describe("renderResult", () => {
     expect((component as any).text).toBe("\nboom");
   });
 
+  it("highlights batch references in error text", () => {
+    const tool = buildToolDef();
+    const markTheme = { ...theme, fg: (name: string, text: string) => `<${name}>${text}</>` } as any;
+    const component = tool.renderResult!(
+      { content: [{ type: "text", text: "[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]" }], details: { diff: "" } },
+      { expanded: false, isPartial: false },
+      markTheme,
+      makeContext({ isError: true }),
+    ) as Text;
+    const text = (component as any).text as string;
+    expect(text).toContain("<warning>Batch 1</>");
+    expect(text).toContain("<error>[E_OP_ABORTED] ");
+  });
+
   it("returns an empty component for an error without text", () => {
     const tool = buildToolDef();
     const component = tool.renderResult!(
@@ -349,7 +376,7 @@ describe("renderResult", () => {
       content: [
         {
           type: "text",
-          text: "Successfully replaced in sample.ts.\n\nWarnings:\n[W_BAD_OP] Swapped reversed remove_from/remove_to.",
+          text: "Successfully replaced in sample.ts.\n\nWarnings:\n[W_BARE_HASH_PREFIX] Stripped \"anchor│\" prefix from replacement_lines line 1.",
         },
       ],
       details: {
@@ -365,7 +392,7 @@ describe("renderResult", () => {
     ) as Text;
     const text = (component as any).text as string;
     expect(text).toContain("+ATIm│BBB");
-    expect(text).toContain("[W_BAD_OP] Swapped reversed remove_from/remove_to.");
+    expect(text).toContain("[W_BARE_HASH_PREFIX] Stripped \"anchor│\" prefix from replacement_lines line 1.");
   });
 
   it("returns an empty component when there is nothing to render", () => {

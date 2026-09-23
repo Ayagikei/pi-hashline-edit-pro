@@ -3,6 +3,7 @@ import {
 	getPreviewInput,
 	toNumberedDiff,
 	colorLines,
+	highlightBatchRefs,
 	fmtPreview,
 	fmtResult,
 	fmtCall,
@@ -131,6 +132,22 @@ describe("fmtResult", () => {
 		expect(result).toContain("[success]");
 		expect(result).toContain("[error]");
 		expect(result).toContain("[dim]");
+	});
+});
+
+describe("highlightBatchRefs", () => {
+	it("colors batch references yellow and the rest red", () => {
+		const result = highlightBatchRefs("[E_OP_ABORTED] Batch 1 aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]", mockTheme);
+		expect(result).toBe("[error][E_OP_ABORTED] [warning]Batch 1[error] aborted: [replace] Call Nr 2 errored [E_BAD_SHAPE]");
+	});
+
+	it("colors a lowercase trailing batch reference", () => {
+		const result = highlightBatchRefs("edit one file per call. Aborts batch 12.", mockTheme);
+		expect(result).toBe("[error]edit one file per call. Aborts [warning]batch 12[error].");
+	});
+
+	it("colors text without batch references entirely red", () => {
+		expect(highlightBatchRefs("boom", mockTheme)).toBe("[error]boom");
 	});
 });
 
@@ -304,6 +321,15 @@ describe("buildAppliedText", () => {
 		expect(result!.split("chain 0").length - 1).toBe(1);
 		expect(result).toContain("to expand");
 	});
+	it("renders the batch header in the warning color without a gutter", () => {
+		const diff = "batch 1:\n +Jkx│chain 0\n-Jkx│chain";
+		const result = buildAppliedText("Successfully replaced in x.", { diff, diffLineNumbers: [null, 1, null] }, mockTheme, false);
+		expect(result).toContain("[warning]batch 1:");
+		expect(result).toContain("1 │  +Jkx│chain 0");
+		expect(result).not.toContain("│ batch 1:");
+		expect(result).toContain("[success]");
+	});
+
 });
 
 describe("fmtResultMd", () => {

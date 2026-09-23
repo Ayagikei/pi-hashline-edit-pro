@@ -1,5 +1,5 @@
 - `replace`: edit with `replace`/`insert`, not `sed -i` or heredocs — anchor edits are verified against what was shown and undoable.
-- `replace`: `replacement_lines` takes bare lines without `│`; `[""]` is one blank line; pasted `anchor│` prefixes are stripped automatically (single line: same anchor for `remove_from` and `remove_to`).
-- `replace`: post-edit diff `+anchor│`/` anchor│` rows are fresh anchors for the next edit — no new `read` needed. Same-file calls in one message form one batch with a single combined diff; check each batch diff before the next turn's edits on that file.
-- `replace`: batched calls must target disjoint ranges and all be valid; an overlap or any failure aborts the whole batch with nothing applied.
-- `replace`: if `replacement_lines` re-include the boundary line adjacent to the range, it is deduplicated automatically, shown as `dedup│content` rows in the diff (not editable, never use `dedup` as an anchor).
+- `replace`: `replacement_lines` `[""]` is one blank line; pasted `anchor│` prefixes are stripped automatically (single line: same anchor for `remove_from` and `remove_to`).
+- `replace`: never anchor on `-anchor│` rows of the post-edit diff, those anchors were freed by the edit. Check each batch diff before the next turn's edits on that file.
+- `replace`: same-file same-message batches must target disjoint ranges; an overlap or member failure aborts only that file's batch unwritten. Unresolvable calls stay solo and don't abort.
+- `replace`: if `replacement_lines` re-include the boundary line adjacent to the range, it is deduplicated automatically (not editable, never use `dedup` as an anchor).

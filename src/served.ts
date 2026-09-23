@@ -1,6 +1,6 @@
 import { HASH_CLASS } from "./hashline/alphabet";
-import { hashSource } from "./hashline";
-import { contentChecksum } from "./hashline/hasher";
+import { lineChecksum } from "./hashline/hash";
+import { markServed } from "./anchor-registry";
 
 const SERVED_DIFF_ROW_RE = new RegExp(`^[+ ](${HASH_CLASS})│`);
 
@@ -26,7 +26,11 @@ export function buildServedMap(
   const entries: Array<[string, string]> = [];
   for (const hash of wantedHashes) {
     const idx = index.get(hash);
-    if (idx !== undefined) entries.push([hash, contentChecksum(hashSource(fileLines[idx]!))]);
+    if (idx !== undefined) entries.push([hash, lineChecksum(fileLines[idx]!)]);
   }
   return entries;
+}
+
+export function serveRows(path: string, fileHashes: string[], fileLines: string[], wantedHashes: string[]): void {
+  markServed(path, buildServedMap(fileHashes, fileLines, wantedHashes), new Set(fileHashes));
 }

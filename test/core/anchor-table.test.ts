@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import anchorData from "../../src/hashline/anchor-table.json";
-import { ANCHOR_COUNT, HASH_LEN, anchorAt, anchorIndex } from "../../src/hashline/alphabet";
+import { ANCHOR_COUNT, HASH_LEN, anchorAt } from "../../src/hashline/alphabet";
 
 const TABLE: string = anchorData.anchors;
 
@@ -11,11 +11,15 @@ describe("anchor table", () => {
     expect(HASH_LEN).toBe(4);
   });
 
-  it("contains only unique 4-char alphanumeric anchors in sorted order", () => {
-    const anchors = TABLE.match(/[A-Za-z0-9]{4}/g) ?? [];
+  it("contains only unique 4-letter anchors in sorted order", () => {
+    const anchors = TABLE.match(/[A-Za-z]{4}/g) ?? [];
     expect(anchors).toHaveLength(ANCHOR_COUNT);
     expect(new Set(anchors).size).toBe(ANCHOR_COUNT);
     expect(anchors.every((a, i) => i === 0 || anchors[i - 1]! < a)).toBe(true);
+  });
+
+  it("is letters only", () => {
+    expect(TABLE).toMatch(/^[A-Za-z]+$/);
   });
 
   it("is built from a shared 1360-piece alphabet", () => {
@@ -28,13 +32,5 @@ describe("anchor table", () => {
     expect(heads.size).toBe(1360);
     expect(tails.size).toBe(1360);
     expect(heads).toEqual(tails);
-  });
-
-  it("round-trips anchorAt and anchorIndex", () => {
-    for (const idx of [0, 1, 130_000, ANCHOR_COUNT - 2, ANCHOR_COUNT - 1]) {
-      expect(anchorIndex(anchorAt(idx))).toBe(idx);
-    }
-    expect(anchorIndex("qjqj")).toBe(-1);
-    expect(anchorIndex("0000")).toBe(-1);
   });
 });

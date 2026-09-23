@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { isAbsolute, resolve as resolvePath, join, dirname } from "node:path";
+import { isAbsolute, relative, resolve as resolvePath, join, dirname } from "node:path";
 
 
 function homeBase(): string {
@@ -49,4 +49,8 @@ function expand(filePath: string): string {
 export function toCwd(filePath: string, cwd: string): string {
   const expanded = expand(filePath);
   return isAbsolute(expanded) ? expanded : resolvePath(cwd, expanded);
+}
+
+export function toDisplayPath(cwd: string, absolutePath: string, fallback?: string): string {
+  return relative(cwd, absolutePath).replace(/\\/g, "/") || (fallback ?? absolutePath);
 }

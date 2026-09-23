@@ -163,7 +163,7 @@ describe("chained edit anchors", () => {
         ctx,
       );
       expect(editResult.content[0].text).toContain("Successfully replaced in stable.ts");
-      expect(editResult.content[0].text).toContain("Warnings:");
+      expect(editResult.details?.metrics?.warnings).toBe(0);
 
       const alphaEdit = await editTool.execute(
         "e2",

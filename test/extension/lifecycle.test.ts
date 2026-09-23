@@ -1,27 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { readConfig } from "../../src/config";
-import { withTempDir } from "../support/fixtures";
+import { withTempDir, makePiStub } from "../support/fixtures";
 
-function makeLifecyclePi() {
-  const handlers = new Map<string, (...args: unknown[]) => unknown>();
-  const commands = new Map<string, { handler: (...args: unknown[]) => unknown }>();
-  const notify = vi.fn();
-  let activeTools: string[] = [];
-  const pi = {
-    registerTool() {},
-    registerCommand(name: string, def: { handler: (...args: unknown[]) => unknown }) {
-      commands.set(name, def);
-    },
-    on(event: string, handler: (...args: unknown[]) => unknown) {
-      handlers.set(event, handler);
-    },
-    getActiveTools: () => activeTools,
-    setActiveTools(tools: string[]) {
-      activeTools = tools;
-    },
-  } as any;
-  return { pi, handlers, commands, notify, getActiveTools: () => activeTools };
-}
 
 async function registerExtension(pi: any) {
   const { default: register } = await import("../../index");
@@ -31,7 +11,7 @@ async function registerExtension(pi: any) {
 describe("session_start lifecycle", () => {
   it("removes the built-in edit and grep tools while keeping anchor_grep", async () => {
     await withTempDir("lifecycle-tools-", async (dir) => {
-      const { pi, handlers } = makeLifecyclePi();
+      const { pi, handlers } = makePiStub();
       pi.setActiveTools(["read", "replace", "edit", "grep", "anchor_grep", "bash"]);
       await registerExtension(pi);
       const sessionStart = handlers.get("session_start");
@@ -45,7 +25,7 @@ describe("session_start lifecycle", () => {
     vi.stubEnv("PI_HASHLINE_DEBUG", "1");
     try {
       await withTempDir("lifecycle-debug-", async (dir) => {
-        const { pi, handlers, notify } = makeLifecyclePi();
+        const { pi, handlers, notify } = makePiStub();
         await registerExtension(pi);
         const sessionStart = handlers.get("session_start")!;
         await sessionStart({}, { cwd: dir, ui: { notify } });
@@ -60,7 +40,7 @@ describe("session_start lifecycle", () => {
     vi.stubEnv("PI_HASHLINE_DEBUG", "0");
     try {
       await withTempDir("lifecycle-quiet-", async (dir) => {
-        const { pi, handlers, notify } = makeLifecyclePi();
+        const { pi, handlers, notify } = makePiStub();
         await registerExtension(pi);
         const sessionStart = handlers.get("session_start")!;
         await sessionStart({}, { cwd: dir, ui: { notify } });
@@ -83,7 +63,7 @@ describe("session_start lifecycle", () => {
           JSON.stringify({ autoRead: false }),
           "utf-8",
         );
-        const { pi, handlers } = makeLifecyclePi();
+        const { pi, handlers } = makePiStub();
         await registerExtension(pi);
         const sessionStart = handlers.get("session_start")!;
         await sessionStart({}, { cwd: dir, ui: { notify: vi.fn() } });
@@ -93,12 +73,32 @@ describe("session_start lifecycle", () => {
       vi.unstubAllEnvs();
     }
   });
+
+  it("keeps the sidecar of a session whose file does not exist yet", async () => {
+    await withTempDir("lifecycle-pending-session-", async (dir) => {
+      const { readFile, readdir } = await import("fs/promises");
+      const { join } = await import("path");
+      const sessionFile = join(dir, "session.jsonl");
+      const { pi, handlers } = makePiStub();
+      await registerExtension(pi);
+      const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "pending" } };
+      await handlers.get("session_start")!({}, ctx);
+      const { allocateAnchor, withAnchorSession } = await import("../../src/anchor-registry");
+      const { sessionClaimsDir } = await import("../../src/paths");
+      await withAnchorSession(ctx, () => allocateAnchor("a.ts", "ck"));
+      const sidecars = await readdir(sessionClaimsDir());
+      expect(sidecars).toHaveLength(1);
+      const lines = (await readFile(join(sessionClaimsDir(), sidecars[0]!), "utf-8")).split("\n");
+      expect(JSON.parse(lines[0]!).kind).toBe("session");
+      expect(JSON.parse(lines[1]!).kind).toBe("allocate");
+    });
+  });
 });
 
 describe("hashline-config command", () => {
   it("is registered alongside clear-anchors", async () => {
     await withTempDir("lifecycle-config-cmd-", async (dir) => {
-      const { pi, handlers, commands, notify } = makeLifecyclePi();
+      const { pi, handlers, commands, notify } = makePiStub();
       await registerExtension(pi);
       const sessionStart = handlers.get("session_start")!;
       await sessionStart({}, { cwd: dir, ui: { notify } });
@@ -109,7 +109,7 @@ describe("hashline-config command", () => {
 
   it("requires interactive mode", async () => {
     await withTempDir("lifecycle-config-tty-", async (dir) => {
-      const { pi, handlers, commands, notify } = makeLifecyclePi();
+      const { pi, handlers, commands, notify } = makePiStub();
       await registerExtension(pi);
       const sessionStart = handlers.get("session_start")!;
       await sessionStart({}, { cwd: dir, ui: { notify } });
@@ -128,7 +128,7 @@ describe("session_shutdown lifecycle", () => {
       const { join } = await import("path");
       const sessionFile = join(dir, "session.jsonl");
       await writeFile(sessionFile, "", "utf-8");
-      const { pi, handlers } = makeLifecyclePi();
+      const { pi, handlers } = makePiStub();
       await registerExtension(pi);
       const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => sessionFile, getSessionId: () => "shutdown" } };
       await handlers.get("session_start")!({}, ctx);
@@ -138,6 +138,26 @@ describe("session_shutdown lifecycle", () => {
       await rm(join(sessionClaimsDir(), `${sessionKeyFor(ctx)!}.registry.jsonl`), { force: true });
       await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
       expect(await withAnchorSession(ctx, () => ownerOf(anchor))).toBeUndefined();
+    });
+  });
+  it("clears only the shutting-down session's auto-read-all completions", async () => {
+    await withTempDir("lifecycle-auto-read-clear-", async (dir) => {
+      const { join } = await import("path");
+      const { pi, handlers } = makePiStub();
+      await registerExtension(pi);
+      const { sessionKeyFor } = await import("../../src/anchor-registry");
+      const { recordAutoReadAllComplete, getAutoReadAllSnapshot } = await import("../../src/auto-read-all-state");
+      const sample = join(dir, "sample.txt");
+      const other = join(dir, "other.txt");
+      const ctx = { cwd: dir, ui: { notify: vi.fn() }, sessionManager: { getSessionFile: () => join(dir, "session.jsonl"), getSessionId: () => "lifecycle" } };
+      const key = sessionKeyFor(ctx);
+      recordAutoReadAllComplete(key, sample, "snap-a");
+      recordAutoReadAllComplete("other-session", other, "snap-b");
+      expect(getAutoReadAllSnapshot(key, sample)).toBe("snap-a");
+      expect(getAutoReadAllSnapshot("other-session", other)).toBe("snap-b");
+      await handlers.get("session_shutdown")!({ type: "session_shutdown", reason: "quit" }, ctx);
+      expect(getAutoReadAllSnapshot(key, sample)).toBeUndefined();
+      expect(getAutoReadAllSnapshot("other-session", other)).toBe("snap-b");
     });
   });
 });

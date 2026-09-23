@@ -4,9 +4,10 @@ import {
   _lineHashesPure,
   ANCHOR_LEN,
   HASH_SEP,
+  HASH_CLASS,
   changedRange,
 } from "./hashline";
-import { MAX_DIFF_INPUT_BYTES } from "./constants";
+import { MAX_DIFF_INPUT_BYTES, DEDUP_ANCHOR } from "./constants";
 import { splitLines } from "./utils";
 import {
   detectEnding,
@@ -22,6 +23,8 @@ export interface DiffSpan {
   start: number;
   end: number;
   replacementCount: number;
+  dedupAbove?: string[];
+  dedupBelow?: string[];
 }
 
 interface PlacedSpan {
@@ -29,6 +32,16 @@ interface PlacedSpan {
   oldEnd: number;
   newStart: number;
   newEnd: number;
+  dedupAbove?: string[];
+  dedupBelow?: string[];
+}
+
+export function fmtDedupRow(line: string): string {
+  const row = `${DEDUP_ANCHOR}${HASH_SEP}${line}`;
+  if (Buffer.byteLength(row, "utf-8") <= DEFAULT_MAX_BYTES) return row;
+  const size = formatSize(Buffer.byteLength(row, "utf-8"));
+  const limit = formatSize(DEFAULT_MAX_BYTES);
+  return `${DEDUP_ANCHOR}${HASH_SEP}[Row is ${size}, exceeds ${limit}; content not shown. Use read to see the full line.]`;
 }
 
 function fmtDiffLine(
@@ -99,7 +112,7 @@ export function spansFromHashes(oldHashes: string[], newHashes: string[]): DiffS
   return spans;
 }
 
-const ANCHORED_DIFF_ROW_RE = /^([+ -])([A-Za-z0-9]{4})│/;
+const ANCHORED_DIFF_ROW_RE = new RegExp(`^([+ -])(${HASH_CLASS})│`);
 
 export function disambiguateDuplicateAnchors(diff: string): string {
   if (!diff.includes("│")) return diff;
@@ -155,7 +168,7 @@ function placeSpans(
     if (span.replacementCount === 0) {
       if (newEnd !== newStart - 1) return undefined;
     } else if (newEnd >= newLen) return undefined;
-    placed.push({ oldStart: span.start, oldEnd: span.end, newStart, newEnd });
+    placed.push({ oldStart: span.start, oldEnd: span.end, newStart, newEnd, dedupAbove: span.dedupAbove, dedupBelow: span.dedupBelow });
     offset += span.replacementCount - spanLen;
     removedSum += spanLen;
     addedSum += span.replacementCount;
@@ -184,9 +197,77 @@ function trimPlacedSpans(
       newEnd -= 1;
     }
     if (oldStart > oldEnd && newStart > newEnd) continue;
-    out.push({ oldStart, oldEnd, newStart, newEnd });
+    out.push({ oldStart, oldEnd, newStart, newEnd, dedupAbove: span.dedupAbove, dedupBelow: span.dedupBelow });
   }
   return out;
+}
+
+function createRowEmitter(
+  output: string[],
+  lineNumbers: (number | undefined)[],
+  maxLineBytes: number,
+  maxBytes: number,
+): {
+  readonly stopped: boolean;
+  readonly truncated: boolean;
+  emitPlain(line: string, num?: number): void;
+  emitRow(prefix: " " | "+" | "-", line: string, hash: string | undefined, num?: number): void;
+  emitDedup(line: string): boolean;
+} {
+  let outBytes = 0;
+  let stopped = false;
+  let truncated = false;
+  const emitPlain = (line: string, num?: number): void => {
+    if (stopped) return;
+    const lineBytes = Buffer.byteLength(line, "utf-8") + 1;
+    if (outBytes + lineBytes > maxBytes) {
+      stopped = true;
+      truncated = true;
+      return;
+    }
+    outBytes += lineBytes;
+    output.push(line);
+    lineNumbers.push(num);
+  };
+  const emitRow = (prefix: " " | "+" | "-", line: string, hash: string | undefined, num?: number): void => {
+    if (stopped) return;
+    const full = fmtDiffLine(prefix, line, hash);
+    const rowBytes = Buffer.byteLength(full, "utf-8");
+    if (rowBytes > maxLineBytes) {
+      const marker = `[Row is ${formatSize(rowBytes)}, exceeds ${formatSize(maxLineBytes)}; content not shown. Use read to see the full line.]`;
+      emitPlain(fmtDiffLine(prefix, marker, hash), num);
+      return;
+    }
+    if (outBytes + rowBytes + 1 > maxBytes) {
+      stopped = true;
+      truncated = true;
+      return;
+    }
+    outBytes += rowBytes + 1;
+    output.push(full);
+    lineNumbers.push(num);
+  };
+  const emitDedup = (line: string): boolean => {
+    if (stopped) return false;
+    const row = fmtDedupRow(line);
+    const rowBytes = Buffer.byteLength(row, "utf-8") + 1;
+    if (outBytes + rowBytes > maxBytes) {
+      stopped = true;
+      truncated = true;
+      return false;
+    }
+    outBytes += rowBytes;
+    output.push(row);
+    lineNumbers.push(undefined);
+    return true;
+  };
+  return {
+    get stopped() { return stopped; },
+    get truncated() { return truncated; },
+    emitPlain,
+    emitRow,
+    emitDedup,
+  };
 }
 
 function genSpanDiff(
@@ -198,7 +279,7 @@ function genSpanDiff(
   maxLineBytes: number,
   maxBytes: number,
   spans: DiffSpan[],
-): { diff: string; firstChangedLine: number | undefined; lineNumbers: (number | undefined)[] } | undefined {
+): { diff: string; firstChangedLine: number | undefined; lineNumbers: (number | undefined)[]; dedupEmitted: boolean } | undefined {
   const oldLines = splitLines(oldContent);
   const newLines = splitLines(newContent);
   if (oldHashes.length !== oldLines.length || newHashes.length !== newLines.length) return undefined;
@@ -220,52 +301,21 @@ function genSpanDiff(
     return undefined;
   }
   const output: string[] = [];
+  let dedupEmitted = false;
   const lineNumbers: (number | undefined)[] = [];
   let firstChangedLine: number | undefined;
-  let outBytes = 0;
-  let stopped = false;
-  let diffTruncated = false;
-  const emitPlain = (line: string, num?: number): void => {
-    if (stopped) return;
-    const lineBytes = Buffer.byteLength(line, "utf-8") + 1;
-    if (outBytes + lineBytes > maxBytes) {
-      stopped = true;
-      diffTruncated = true;
-      return;
-    }
-    outBytes += lineBytes;
-    output.push(line);
-    lineNumbers.push(num);
-  };
-  const emitRow = (prefix: " " | "+" | "-", line: string, hash: string | undefined, num?: number): void => {
-    if (stopped) return;
-    const full = fmtDiffLine(prefix, line, hash);
-    const rowBytes = Buffer.byteLength(full, "utf-8");
-    if (rowBytes > maxLineBytes) {
-      const marker = `[Row is ${formatSize(rowBytes)}, exceeds ${formatSize(maxLineBytes)}; content not shown. Use read to see the full line.]`;
-      emitPlain(fmtDiffLine(prefix, marker, hash), num);
-      return;
-    }
-    if (outBytes + rowBytes + 1 > maxBytes) {
-      stopped = true;
-      diffTruncated = true;
-      return;
-    }
-    outBytes += rowBytes + 1;
-    output.push(full);
-    lineNumbers.push(num);
-  };
+  const em = createRowEmitter(output, lineNumbers, maxLineBytes, maxBytes);
   const emitGap = (gapStartNew: number, gapLen: number, position: "leading" | "middle" | "trailing"): void => {
-    if (stopped || gapLen <= 0) return;
+    if (em.stopped || gapLen <= 0) return;
     if (position === "leading") {
       let count = contextLines;
       if (contextLines > 0 && gapLen > count && isBlankLine(newLines[gapStartNew + gapLen - 1]!)) count += 1;
       count = Math.min(count, gapLen);
       const skipStart = gapLen - count;
-      if (skipStart > 0) emitPlain(" ...", undefined);
-      for (let k = gapLen - count; k < gapLen && !stopped; k++) {
+      if (skipStart > 0) em.emitPlain(" ...", undefined);
+      for (let k = gapLen - count; k < gapLen && !em.stopped; k++) {
         const newIdx = gapStartNew + k;
-        emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+        em.emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
       }
       return;
     }
@@ -273,11 +323,11 @@ function genSpanDiff(
       let count = contextLines;
       if (contextLines > 0 && gapLen > count && isBlankLine(newLines[gapStartNew]!)) count += 1;
       count = Math.min(count, gapLen);
-      for (let k = 0; k < count && !stopped; k++) {
+      for (let k = 0; k < count && !em.stopped; k++) {
         const newIdx = gapStartNew + k;
-        emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+        em.emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
       }
-      if (gapLen > count) emitPlain(" ...", undefined);
+      if (gapLen > count) em.emitPlain(" ...", undefined);
       return;
     }
     let headCount = contextLines;
@@ -286,50 +336,58 @@ function genSpanDiff(
     if (contextLines > 0 && gapLen - tailCount > headCount && isBlankLine(newLines[gapStartNew + gapLen - tailCount]!)) tailCount += 1;
     const middleLen = gapLen - headCount - tailCount;
     if (middleLen <= 0) {
-      for (let k = 0; k < gapLen && !stopped; k++) {
+      for (let k = 0; k < gapLen && !em.stopped; k++) {
         const newIdx = gapStartNew + k;
-        emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+        em.emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
       }
       return;
     }
-    for (let k = 0; k < headCount && !stopped; k++) {
+    for (let k = 0; k < headCount && !em.stopped; k++) {
       const newIdx = gapStartNew + k;
-      emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+      em.emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
     }
-    if (!stopped) emitPlain(" ...", undefined);
-    for (let k = gapLen - tailCount; k < gapLen && !stopped; k++) {
+    if (!em.stopped) em.emitPlain(" ...", undefined);
+    for (let k = gapLen - tailCount; k < gapLen && !em.stopped; k++) {
       const newIdx = gapStartNew + k;
-      emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+      em.emitRow(" ", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
     }
   };
   oldPos = 0;
   newPos = 0;
-  for (let spanIdx = 0; spanIdx < ordered.length && !stopped; spanIdx++) {
+  for (let spanIdx = 0; spanIdx < ordered.length && !em.stopped; spanIdx++) {
     const span = ordered[spanIdx]!;
     const gapLen = span.oldStart - oldPos;
     emitGap(newPos, gapLen, spanIdx === 0 ? "leading" : "middle");
-    if (stopped) break;
+    if (em.stopped) break;
     if (firstChangedLine === undefined) firstChangedLine = span.newStart + 1;
-    for (let oldIdx = span.oldStart; oldIdx <= span.oldEnd && !stopped; oldIdx++) {
-      emitRow("-", oldLines[oldIdx]!, oldHashes[oldIdx], oldIdx + 1);
+    for (const dedup of span.dedupAbove ?? []) {
+      if (em.stopped) break;
+      if (em.emitDedup(dedup)) dedupEmitted = true;
     }
-    for (let newIdx = span.newStart; newIdx <= span.newEnd && !stopped; newIdx++) {
-      emitRow("+", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+    for (let oldIdx = span.oldStart; oldIdx <= span.oldEnd && !em.stopped; oldIdx++) {
+      em.emitRow("-", oldLines[oldIdx]!, oldHashes[oldIdx], oldIdx + 1);
+    }
+    for (let newIdx = span.newStart; newIdx <= span.newEnd && !em.stopped; newIdx++) {
+      em.emitRow("+", newLines[newIdx]!, newHashes[newIdx], newIdx + 1);
+    }
+    for (const dedup of span.dedupBelow ?? []) {
+      if (em.stopped) break;
+      if (em.emitDedup(dedup)) dedupEmitted = true;
     }
     oldPos = span.oldEnd + 1;
     newPos = span.newEnd + 1;
   }
-  if (!stopped) {
+  if (!em.stopped) {
     const trailingLen = oldLines.length - oldPos;
     emitGap(newPos, trailingLen, "trailing");
   }
-  if (diffTruncated) {
+  if (em.truncated) {
     output.push(" ...");
     lineNumbers.push(undefined);
     output.push(`[diff truncated at ${formatSize(maxBytes)}; use read to see the rest.]`);
     lineNumbers.push(undefined);
   }
-  return { diff: output.join("\n"), firstChangedLine, lineNumbers };
+  return { diff: output.join("\n"), firstChangedLine, lineNumbers, dedupEmitted };
 }
 
 function overDiffInputLimit(oldContent: string, newContent: string): boolean {
@@ -344,14 +402,14 @@ export function genDiff(
   oldContentHashes?: string[],
   limits?: DiffLimits,
   spans?: DiffSpan[],
-): { diff: string; firstChangedLine: number | undefined; lineNumbers: (number|undefined)[] } {
+): { diff: string; firstChangedLine: number | undefined; lineNumbers: (number|undefined)[]; spanDedupEmitted?: boolean } {
   const maxLineBytes = limits?.unlimited ? Number.POSITIVE_INFINITY : (limits?.maxLineBytes ?? DEFAULT_MAX_BYTES);
   const maxBytes = limits?.unlimited ? Number.POSITIVE_INFINITY : (limits?.maxBytes ?? DEFAULT_MAX_BYTES);
   if (spans && newContentHashes && oldContentHashes) {
     const anchored = genSpanDiff(oldContent, newContent, contextLines, newContentHashes, oldContentHashes, maxLineBytes, maxBytes, spans);
     if (anchored) {
       const diff = disambiguateDuplicateAnchors(anchored.diff);
-      return { diff, firstChangedLine: anchored.firstChangedLine, lineNumbers: anchored.lineNumbers };
+      return { diff, firstChangedLine: anchored.firstChangedLine, lineNumbers: anchored.lineNumbers, ...(anchored.dedupEmitted ? { spanDedupEmitted: true as const } : {}) };
     }
   }
   if (!limits?.unlimited && overDiffInputLimit(oldContent, newContent)) {
@@ -416,45 +474,12 @@ export function genDiff(
   let oldLineNum = 1;
   let lastWasChange = false;
   let firstChangedLine: number | undefined;
-  let outBytes = 0;
-  let stopped = false;
-  let diffTruncated = false;
   const lineNumbers: (number|undefined)[] = [];
 
-  const emitPlain = (line: string, num?: number): void => {
-    if (stopped) return;
-    const lineBytes = Buffer.byteLength(line, "utf-8") + 1;
-    if (outBytes + lineBytes > maxBytes) {
-      stopped = true;
-      diffTruncated = true;
-      return;
-    }
-    outBytes += lineBytes;
-    output.push(line);
-    lineNumbers.push(num);
-  };
-
-  const emitRow = (prefix: " " | "+" | "-", line: string, hash: string | undefined, num?: number): void => {
-    if (stopped) return;
-    const full = fmtDiffLine(prefix, line, hash);
-    const rowBytes = Buffer.byteLength(full, "utf-8");
-    if (rowBytes > maxLineBytes) {
-      const marker = `[Row is ${formatSize(rowBytes)}, exceeds ${formatSize(maxLineBytes)}; content not shown. Use read to see the full line.]`;
-      emitPlain(fmtDiffLine(prefix, marker, hash), num);
-      return;
-    }
-    if (outBytes + rowBytes + 1 > maxBytes) {
-      stopped = true;
-      diffTruncated = true;
-      return;
-    }
-    outBytes += rowBytes + 1;
-    output.push(full);
-    lineNumbers.push(num);
-  };
+  const em = createRowEmitter(output, lineNumbers, maxLineBytes, maxBytes);
 
   for (let i = 0; i < parts.length; i++) {
-    if (stopped) break;
+    if (em.stopped) break;
     const part = parts[i]!;
     const raw = part.value.split("\n");
     if (raw[raw.length - 1] === "") raw.pop();
@@ -463,18 +488,18 @@ export function genDiff(
     if (part.added || part.removed) {
       if (firstChangedLine === undefined) firstChangedLine = newLineNum;
       for (let k = 0; k < displayLines.length; k++) {
-        if (stopped) break;
+        if (em.stopped) break;
         if (part.added) {
           const hash = effectiveNewHashes[newLineNum - 1];
-          emitRow("+", displayLines[k]!, hash, newLineNum);
+          em.emitRow("+", displayLines[k]!, hash, newLineNum);
           newLineNum++;
         } else {
           const hash = oldContentHashes?.[oldLineNum - 1];
-          emitRow("-", displayLines[k]!, hash, oldLineNum);
+          em.emitRow("-", displayLines[k]!, hash, oldLineNum);
           oldLineNum++;
         }
       }
-      if (stopped) break;
+      if (em.stopped) break;
       lastWasChange = true;
       continue;
     }
@@ -537,25 +562,25 @@ export function genDiff(
       }
 
       if (skipStart > 0) {
-        emitPlain(" ...", undefined);
+        em.emitPlain(" ...", undefined);
         newLineNum += skipStart;
         oldLineNum += skipStart;
       }
       for (const line of linesToShow) {
-        if (stopped) break;
+        if (em.stopped) break;
         if (isEllipsisMarker(line)) {
-          emitPlain(" ...", undefined);
+          em.emitPlain(" ...", undefined);
           newLineNum += skipMiddle;
           oldLineNum += skipMiddle;
           continue;
         }
         const hash = effectiveNewHashes[newLineNum - 1];
-        emitRow(" ", line, hash, newLineNum);
+        em.emitRow(" ", line, hash, newLineNum);
         newLineNum++;
         oldLineNum++;
       }
       if (skipTail > 0) {
-        emitPlain(" ...", undefined);
+        em.emitPlain(" ...", undefined);
       }
     } else {
       newLineNum += displayLines.length;
@@ -564,7 +589,7 @@ export function genDiff(
     lastWasChange = false;
   }
 
-  if (diffTruncated) {
+  if (em.truncated) {
     output.push(" ...");
     lineNumbers.push(undefined);
     output.push(`[diff truncated at ${formatSize(maxBytes)}; use read to see the rest.]`);

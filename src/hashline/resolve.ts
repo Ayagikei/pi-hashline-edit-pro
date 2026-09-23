@@ -1,10 +1,8 @@
 import { abortIf, rejectUnknownFields, firstNonEmptyIndex, lastNonEmptyIndex, clipLine, getCached, decodeStringArray, assertNoNul } from "../utils";
 import { parseHashRef, parseText, type Anchor } from "./parse";
-import { HASH_SEP, stripRowPrefix, canon } from "./hash";
+import { HASH_SEP, stripRowPrefix, canon, lineChecksum, type RowPrefixKind } from "./hash";
 import { HASH_RUN } from "./alphabet";
 import { NEW_CONTENT_NOT_ARRAY_MSG, MAX_RANGE_STALE_LINES } from "../constants";
-import { contentChecksum } from "./hasher";
-import { hashSource } from "./hash";
 
 export type RAnchor = {
 	line: number;
@@ -110,7 +108,7 @@ export function fmtMismatchWithHashes(
         const h = fileHashes[ln - 1]!;
         const c = fileLines[ln - 1] ?? "";
         hashes.push(h);
-        servedMap.set(h, contentChecksum(hashSource(c)));
+        servedMap.set(h, lineChecksum(c));
         rows.push(`    ${ln}: ${h}│${clipLine(c)}`);
       }
       out.push("");
@@ -171,7 +169,7 @@ export function stripAnchorRow(
 export function resEdit(edit: HTEdit, warnings?: string[]): HEdit {
   assertItem(edit as Record<string, unknown>);
 
-  const replaceLines = parseText(decodeStringArray(edit.replacement_lines, warnings) ?? edit.replacement_lines, warnings);
+  const replaceLines = parseText(decodeStringArray(edit.replacement_lines, warnings) ?? edit.replacement_lines);
   assertNoNul(replaceLines);
   const bounds = [edit.remove_from, edit.remove_to].map((ref) => {
     return stripAnchorRow(ref.trim(), "remove_from/remove_to entry", warnings);
@@ -193,52 +191,37 @@ function warnUnicodeEsc(
   }
 }
 
-export function stripBarePrefixes(
-	edit: HEdit,
-	fileHashes: string[],
-	warnings: string[],
-): HEdit {
-	const fileHashSet = new Set(fileHashes);
-	const stripped: { lineIndex: number; matched: boolean }[] = [];
-	const contentLines = edit.content_lines.map((line, lineIndex) => {
-		const result = stripRowPrefix(line);
-		if (result.kind !== "bare") return line;
-		stripped.push({ lineIndex, matched: fileHashSet.has(result.hash ?? "") });
-		return result.text;
-	});
-	if (stripped.length === 0) return edit;
-	const locations = stripped
-		.map((s) => `replacement_lines line ${s.lineIndex + 1}`)
-		.join(", ");
-	warnings.push(
-    `[W_BARE_HASH_PREFIX] Stripped "anchor│" prefix from ${locations}.`
-	);
-	return { ...edit, content_lines: contentLines };
-}
-
-export function stripDiffPrefixes(
+function stripRowPrefixes(
 	edit: HEdit,
 	warnings: string[],
+	kinds: RowPrefixKind[],
+	code: string,
+	marker: string,
 ): HEdit {
 	const stripped: number[] = [];
 	const contentLines = edit.content_lines.map((line, lineIndex) => {
 		const result = stripRowPrefix(line);
-		if (result.kind !== "plus" && result.kind !== "minus") return line;
+		if (result.kind === null || !kinds.includes(result.kind)) return line;
 		stripped.push(lineIndex);
 		return result.text;
 	});
 	if (stripped.length === 0) return edit;
 	const locations = stripped.map((i) => `replacement_lines line ${i + 1}`).join(", ");
-	warnings.push(
-    `[W_INVALID_PATCH] Stripped diff-preview marker from ${locations}.`
-	);
+	warnings.push(`${code} Stripped ${marker} from ${locations}.`);
 	return { ...edit, content_lines: contentLines };
+}
+
+export function stripBarePrefixes(edit: HEdit, warnings: string[]): HEdit {
+	return stripRowPrefixes(edit, warnings, ["bare"], "[W_BARE_HASH_PREFIX]", '"anchor│" prefix');
+}
+
+export function stripDiffPrefixes(edit: HEdit, warnings: string[]): HEdit {
+	return stripRowPrefixes(edit, warnings, ["plus", "minus"], "[W_INVALID_PATCH]", "diff-preview marker");
 }
 
 export function swapReversedRanges(
 	edit: HEdit,
 	fileHashes: string[],
-	warnings: string[],
 ): HEdit {
 	const lineByHash = new Map<string, number>();
 	for (let i = 0; i < fileHashes.length; i++) {
@@ -254,9 +237,6 @@ export function swapReversedRanges(
 	) {
 		return edit;
 	}
-	warnings.push(
-    `[W_BAD_OP] Swapped reversed remove_from/remove_to.`
-	);
 	return { ...edit, hash_bounds: [endRef, startRef] as [Anchor, Anchor] };
 }
 
@@ -515,7 +495,7 @@ export function assertRangeServed(
     const hash = fileHashes[line - 1]!;
     const content = fileLines[line - 1]!;
     const servedContent = served?.get(hash);
-    if (servedContent === undefined || servedContent !== contentChecksum(hashSource(content))) mismatchLines.push(line);
+    if (servedContent === undefined || servedContent !== lineChecksum(content)) mismatchLines.push(line);
   }
   if (mismatchLines.length === 0) return;
   const rangeLength = endLine - startLine + 1;
@@ -527,7 +507,7 @@ export function assertRangeServed(
     const hash = fileHashes[line - 1]!;
     const content = fileLines[line - 1]!;
     shownHashes.push(hash);
-    shownMap.set(hash, contentChecksum(hashSource(content)));
+    shownMap.set(hash, lineChecksum(content));
     rows.push(fmtRow(hash, clipLine(content)));
   }
   const location = filePath ? ` in ${filePath}` : "";

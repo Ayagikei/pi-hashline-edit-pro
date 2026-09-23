@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { relative } from "node:path";
+import { toDisplayPath } from "./paths";
 import { readConfig, getDiffContextLines } from "./config";
-import { resolveEditTarget, throwIfStrictInput, tryResolveEditTarget } from "./edit-common";
+import { throwIfStrictInput, tryResolveEditTarget } from "./edit-common";
 import { readNormFile, safeSnapId } from "./file-reader";
 import { resolveInCwd, writeAtomic, type FileIdentity } from "./fs-write";
 import {
@@ -16,19 +16,18 @@ import {
   type HEdit,
   type PlannedEdit,
 } from "./hashline";
-import { clearBoundaryBypass, markBoundaryNoop } from "./boundary-bypass";
-import { boundaryDedupWarning } from "./commit";
-import { adoptAnchors, markServed, servedForPath } from "./anchor-registry";
+import { boundaryDedupNoopWarning, boundaryDedupWarning, dedupRowsFromFixes } from "./commit";
+import { adoptAnchors, servedForPath } from "./anchor-registry";
 import { restoreEndings, stripBOM, toLF, type LineEnding } from "./normalize";
 import { assertInsertReq, assertReq, normReq } from "./payload-contract";
 import { saveUndo } from "./replace-undo";
 import { buildChanged, buildNoop, type RMetrics, type TResult } from "./replace-response";
-import { buildServedMap, servedHashesFromDiff } from "./served";
-import { abortIf, assertLineLimit, errCode, isRec, splitLines } from "./utils";
-import { MAX_BYTES } from "./constants";
+import { serveRows, servedHashesFromDiff } from "./served";
+import { abortIf, assertByteLimit, assertLineLimit, errCode, isRec, splitLines } from "./utils";
 
 export interface PlannedMember {
   batchKey: number;
+  id: string;
   display: number;
   total: number;
   target: string;
@@ -56,6 +55,7 @@ interface BatchBase {
 export interface BatchPiece {
   order: number;
   kind: BatchKind;
+  direction?: "before" | "after";
   start: number;
   end: number;
   fromHash: string;
@@ -63,14 +63,15 @@ export interface BatchPiece {
   newLines: string[];
   warnings: string[];
   autoFixes: number;
+  dedupAbove: string[];
+  dedupBelow: string[];
   noop: boolean;
-  noopPayload?: string;
   foldedLines: number;
-  bypassConsumed?: boolean;
 }
 
 export interface BatchMemberInput {
   kind: BatchKind;
+  direction?: "before" | "after";
   member: PlannedMember;
   targetPath: string;
   mutationTargetPath: string;
@@ -80,9 +81,13 @@ export interface BatchMemberInput {
   extraWarnings: string[];
   skipBoundaryDedup: boolean;
   strictBoundaryDedup: boolean;
-  noopPayload?: string;
   foldedLines?: number;
-  bypassConsumed?: boolean;
+}
+
+interface BatchFailure {
+  kind: BatchKind;
+  order: number;
+  code?: string;
 }
 
 interface BatchState {
@@ -100,7 +105,7 @@ interface BatchState {
   failures: number;
   failed: boolean;
   firstError?: unknown;
-  poisonedBy?: string;
+  failure?: BatchFailure;
   warnings: string[];
 }
 
@@ -119,6 +124,36 @@ const MAX_TRACKED_BATCHES = 256;
 const plan = new Map<string, PlannedMember>();
 const batches = new Map<number, BatchState>();
 let nextBatchKey = 1;
+const abortedMembers = new Map<string, { display: number; message: string }>();
+const ABORTED_MEMBERS_LIMIT = 1024;
+const placeholderResults = new Map<string, TResult>();
+
+function markBatchMembersAborted(runtime: BatchState): void {
+  const message = abortedBatchMessage(runtime);
+  for (const id of runtime.memberIds) {
+    abortedMembers.delete(id);
+    abortedMembers.set(id, { display: runtime.display, message });
+    const result = placeholderResults.get(id);
+    if (result?.details.batch) {
+      result.details.batch.aborted = true;
+      result.details.batch.abortMessage = message;
+    }
+  }
+  while (abortedMembers.size > ABORTED_MEMBERS_LIMIT) {
+    const oldest = abortedMembers.keys().next().value;
+    if (oldest === undefined) break;
+    abortedMembers.delete(oldest);
+  }
+}
+
+export function abortedBatchMessageFor(toolCallId: string): string | undefined {
+  const marked = abortedMembers.get(toolCallId);
+  if (marked !== undefined) return marked.message;
+  const member = plan.get(toolCallId);
+  if (!member) return undefined;
+  const runtime = batches.get(member.batchKey);
+  return runtime?.failed ? abortedBatchMessage(runtime) : undefined;
+}
 
 export function batchMemberFor(toolCallId: string): PlannedMember | undefined {
   return plan.get(toolCallId);
@@ -127,6 +162,8 @@ export function batchMemberFor(toolCallId: string): PlannedMember | undefined {
 export function resetBatchStateForTests(): void {
   plan.clear();
   batches.clear();
+  abortedMembers.clear();
+  placeholderResults.clear();
   nextBatchKey = 1;
 }
 
@@ -148,51 +185,17 @@ function normalizeEditArgs(args: unknown): NormalizedEditArgs | undefined {
   }
   return undefined;
 }
-function anchorTargetFor(args: unknown): string | undefined {
-  const normalized = normalizeEditArgs(args);
-  if (!normalized) return undefined;
-  if (normalized.kind === "replace") return tryResolveEditTarget(normalized.removeFrom, normalized.removeTo);
-  return tryResolveEditTarget(normalized.anchor);
-}
-function unresolvedErrorFor(call: EditCall): Error {
-  const normalized = normalizeEditArgs(call.args);
-  if (!normalized) return new Error(`sibling invalid`);
-  const refs = normalized.kind === "replace" ? [normalized.removeFrom, normalized.removeTo].filter((ref): ref is string => typeof ref === "string").join("→") : normalized.anchor;
-  try {
-    if (normalized.kind === "replace") resolveEditTarget(normalized.removeFrom, normalized.removeTo);
-    else resolveEditTarget(normalized.anchor);
-  } catch {
-    return new Error(`sibling stale (${refs})`);
-  }
-  return new Error(`sibling stale (${refs})`);
-}
-async function inferredTargetFor(args: unknown, cwd: string, requirePath: boolean): Promise<string | undefined> {
-  const normalized = normalizeEditArgs(args);
-  if (!normalized) return undefined;
-  if (requirePath && normalized.path) {
-    try {
-      return (await resolveInCwd(normalized.path, cwd)).resolved;
-    } catch {
-      return undefined;
-    }
-  }
-  if (normalized.kind === "replace") {
-    return tryResolveEditTarget(normalized.removeFrom) ?? (normalized.removeTo ? tryResolveEditTarget(normalized.removeTo) : undefined);
-  }
-  return undefined;
-}
 
 async function verifyPaths(
-  group: Array<{ id: string; target: string; kind: BatchKind; args: unknown }>,
+  group: Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }>,
   cwd: string,
-): Promise<Array<{ id: string; target: string; kind: BatchKind; args: unknown }>> {
-  const verified: Array<{ id: string; target: string; kind: BatchKind; args: unknown }> = [];
+): Promise<Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }>> {
+  const verified: Array<{ id: string; target: string; kind: BatchKind; args: unknown; path?: string }> = [];
   for (const item of group) {
-    const normalized = normalizeEditArgs(item.args);
-    if (!normalized || !normalized.path) continue;
+    if (!item.path) continue;
     let resolved: string | undefined;
     try {
-      resolved = (await resolveInCwd(normalized.path, cwd)).resolved;
+      resolved = (await resolveInCwd(item.path, cwd)).resolved;
     } catch {
       resolved = undefined;
     }
@@ -207,7 +210,12 @@ function enforceCap(): void {
     if (oldest === undefined) return;
     const state = batches.get(oldest);
     batches.delete(oldest);
-    if (state) for (const id of state.memberIds) plan.delete(id);
+    if (state) {
+      for (const id of state.memberIds) {
+        plan.delete(id);
+        placeholderResults.delete(id);
+      }
+    }
   }
 }
 
@@ -223,11 +231,24 @@ export async function planAssistantMessage(message: unknown, cwd: string): Promi
   if (calls.length < 2) return;
   const earlyConfig = await readConfig();
   const requirePath = earlyConfig.requirePath === true;
-  interface ResolvedCall { id: string; target: string; kind: BatchKind; args: unknown }
+  interface ResolvedCall { id: string; target: string; kind: BatchKind; args: unknown; path?: string }
   const resolved: ResolvedCall[] = [];
   for (const call of calls) {
-    const target = anchorTargetFor(call.args) ?? await inferredTargetFor(call.args, cwd, requirePath);
-    if (target) resolved.push({ id: call.id, target, kind: call.name as BatchKind, args: call.args });
+    const normalized = normalizeEditArgs(call.args);
+    if (!normalized) continue;
+    let target = normalized.kind === "replace" ? tryResolveEditTarget(normalized.removeFrom, normalized.removeTo) : tryResolveEditTarget(normalized.anchor);
+    if (!target) {
+      if (requirePath && normalized.path) {
+        try {
+          target = (await resolveInCwd(normalized.path, cwd)).resolved;
+        } catch {
+          target = undefined;
+        }
+      } else if (normalized.kind === "replace") {
+        target = tryResolveEditTarget(normalized.removeFrom) ?? (normalized.removeTo ? tryResolveEditTarget(normalized.removeTo) : undefined);
+      }
+    }
+    if (target) resolved.push({ id: call.id, target, kind: call.name as BatchKind, args: call.args, ...(normalized.path ? { path: normalized.path } : {}) });
   }
   const groups = new Map<string, ResolvedCall[]>();
   for (const item of resolved) {
@@ -245,22 +266,10 @@ export async function planAssistantMessage(message: unknown, cwd: string): Promi
   } else {
     finalGroups.push(...multi);
   }
-  const resolvedIds = new Set(resolved.map((item) => item.id));
-  const unplanned = calls.filter((call) => !resolvedIds.has(call.id));
-  let poison: { target: string; error: unknown; callId: string } | undefined;
-  if (unplanned.length > 0 && groups.size === 1) {
-    const sole = [...groups.values()][0]!;
-    const poisonTarget = sole[0]!.target;
-    const poisonCall = unplanned[0]!;
-    poison = { target: poisonTarget, error: unresolvedErrorFor(poisonCall), callId: poisonCall.id };
-    if (!finalGroups.some((group) => group[0]!.target === poisonTarget)) finalGroups.push(sole);
-  }
   let display = 0;
   for (const group of finalGroups) {
     display += 1;
     const key = nextBatchKey++;
-    const matchingPoison = poison !== undefined && group[0]!.target === poison.target ? poison : undefined;
-    const poisoned = matchingPoison !== undefined;
     batches.set(key, {
       display,
       target: group[0]!.target,
@@ -270,14 +279,14 @@ export async function planAssistantMessage(message: unknown, cwd: string): Promi
       pieces: [],
       applied: 0,
       noops: 0,
-      failures: poisoned ? 1 : 0,
-      failed: poisoned,
-      ...(matchingPoison ? { firstError: matchingPoison.error, poisonedBy: matchingPoison.callId } : {}),
+      failures: 0,
+      failed: false,
       warnings: [],
     });
     group.forEach((item, index) => {
       plan.set(item.id, {
         batchKey: key,
+        id: item.id,
         display,
         total: finalGroups.length,
         target: item.target,
@@ -309,7 +318,7 @@ function batchVerb(runtime: BatchState): string {
   return "replaced";
 }
 function batchHeader(member: PlannedMember): string {
-  return member.total > 1 ? `batch ${member.display}:` : "batch:";
+  return `batch ${member.display}:`;
 }
 
 function formatBatchLines(start: number, end: number): string {
@@ -337,7 +346,7 @@ function batchPlaceholder(member: PlannedMember, piece: BatchPiece, snapshotId: 
     content: [
       {
         type: "text",
-        text: member.total > 1 ? `In batch ${member.display}` : "In batch",
+        text: `In batch ${member.display}`,
       },
     ],
     details: {
@@ -357,12 +366,15 @@ export function withAbortSuffix(message: string, display: number): string {
   if (message.includes(suffix)) return message;
   return message.endsWith(".") ? `${message} ${suffix}` : `${message}. ${suffix}`;
 }
-export function suffixPoisonCause(toolCallId: string, error: unknown): void {
-  if (!(error instanceof Error)) return;
-  for (const runtime of batches.values()) {
-    if (runtime.poisonedBy === toolCallId) error.message = withAbortSuffix(error.message, runtime.display);
-  }
+
+const ERROR_CODE_RE = /\[(E_[A-Z0-9_]+)\]/;
+
+function errorCodeOf(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code = ERROR_CODE_RE.exec(error.message)?.[1];
+  return code === "E_OP_ABORTED" ? undefined : code;
 }
+
 export function noteBatchFailure(member: PlannedMember, error: unknown): void {
   const runtime = batches.get(member.batchKey);
   if (!runtime) return;
@@ -371,18 +383,39 @@ export function noteBatchFailure(member: PlannedMember, error: unknown): void {
   if (!runtime.failed) {
     runtime.failed = true;
     runtime.firstError = error;
+    const code = errorCodeOf(error);
+    runtime.failure = { kind: member.kind, order: member.order, ...(code !== undefined ? { code } : {}) };
   }
+  markBatchMembersAborted(runtime);
 }
 
-function batchAbortedError(runtime: BatchState, input?: BatchMemberInput): Error {
-  restoreBatchBypasses(runtime, input);
-  return new Error(`[E_OP_ABORTED] Batch ${runtime.display} aborted.`);
+function firstFailureCause(runtime: BatchState): string | undefined {
+  const error = runtime.firstError;
+  if (!(error instanceof Error)) return undefined;
+  const suffix = ` Aborts batch ${runtime.display}.`;
+  const message = error.message.endsWith(suffix) ? error.message.slice(0, -suffix.length) : error.message;
+  const firstLine = message.split("\n")[0]?.trim() ?? "";
+  if (firstLine.length === 0) return undefined;
+  if (!firstLine.endsWith(":")) return firstLine;
+  const sentenceEnd = firstLine.lastIndexOf(". ");
+  return sentenceEnd >= 0 ? firstLine.slice(0, sentenceEnd + 1) : firstLine.slice(0, -1);
 }
-function restoreBatchBypasses(runtime: BatchState, input?: BatchMemberInput): void {
-  for (const piece of runtime.pieces) {
-    if (piece.bypassConsumed && piece.noopPayload) markBoundaryNoop(runtime.target, piece.noopPayload);
+
+function abortedBatchMessage(runtime: BatchState): string {
+  const failure = runtime.failure;
+  if (failure?.code !== undefined) {
+    return `[E_OP_ABORTED] Batch ${runtime.display} aborted: [${failure.kind}] Call Nr ${failure.order} errored [${failure.code}]`;
   }
-  if (input?.bypassConsumed && input.noopPayload) markBoundaryNoop(input.mutationTargetPath, input.noopPayload);
+  const cause = firstFailureCause(runtime);
+  return cause ? `[E_OP_ABORTED] Batch ${runtime.display} aborted: ${cause}` : `[E_OP_ABORTED] Batch ${runtime.display} aborted.`;
+}
+
+function batchAbortedError(runtime: BatchState): Error {
+  discardBatchState(runtime);
+  return new Error(abortedBatchMessage(runtime));
+}
+function discardBatchState(runtime: BatchState): void {
+  markBatchMembersAborted(runtime);
 }
 
 export async function ensureBatchBase(input: {
@@ -418,7 +451,7 @@ export async function ensureBatchBase(input: {
   runtime.paths = {
     absolutePath: file.absolutePath,
     mutationTargetPath: input.mutationTargetPath,
-    displayPath: relative(input.cwd, file.absolutePath).replace(/\\/g, "/") || input.targetPath,
+    displayPath: toDisplayPath(input.cwd, file.absolutePath, input.targetPath),
   };
   return base;
 }
@@ -426,7 +459,7 @@ export async function ensureBatchBase(input: {
 export async function executeBatchMember(input: BatchMemberInput): Promise<TResult> {
   const runtime = batches.get(input.member.batchKey);
   if (!runtime) throw new Error(`[E_STALE_ANCHOR] Batch ${input.member.display} is no longer tracked. Call read for fresh anchors.`);
-  if (runtime.failed) throw batchAbortedError(runtime, input);
+  if (runtime.failed) throw batchAbortedError(runtime);
   let base: BatchBase;
   try {
     base = await ensureBatchBase({
@@ -438,13 +471,13 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
     });
   } catch (error) {
     noteBatchFailure(input.member, error);
-    restoreBatchBypasses(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   if (input.mutationTargetPath !== input.member.target) {
     const error = new Error(`[E_STALE_ANCHOR] "${input.hedit.hash_bounds[0].hash}" is no longer owned by ${input.member.target}. Call read for fresh anchors.`);
     noteBatchFailure(input.member, error);
-    restoreBatchBypasses(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   const displayPath = runtime.paths?.displayPath ?? input.targetPath;
@@ -464,11 +497,11 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
     else if (error instanceof Error && error.message.startsWith("[E_BOUNDARY_STRICT]")) {
       const indexed = new Error(`edit #${input.member.order} strict boundary-dedup rejection: ${error.message}`);
       noteBatchFailure(input.member, indexed);
-      restoreBatchBypasses(runtime, input);
+      discardBatchState(runtime);
       throw indexed;
     }
     noteBatchFailure(input.member, error);
-    restoreBatchBypasses(runtime, input);
+    discardBatchState(runtime);
     throw error;
   }
   const start = planned.resolved.hash_bounds[0].line;
@@ -477,21 +510,23 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
   const baseLines = base.baseLines;
   const originalSlice = baseLines.slice(start - 1, end);
   const noop = originalSlice.length === newLines.length && originalSlice.every((line, index) => line === newLines[index]);
-  const autoFixes = planned.autoFixes?.length ?? 0;
+  const fixes = planned.autoFixes ?? [];
+  const dedupRows = dedupRowsFromFixes(fixes);
   const piece: BatchPiece = {
     order: input.member.order,
     kind: input.kind,
+    ...(input.direction !== undefined ? { direction: input.direction } : {}),
     start,
     end,
     fromHash: input.hedit.hash_bounds[0].hash,
     toHash: input.hedit.hash_bounds[1].hash,
     newLines: [...newLines],
     warnings: [...input.extraWarnings, ...planned.warnings],
-    autoFixes,
+    autoFixes: fixes.length,
+    dedupAbove: dedupRows.above,
+    dedupBelow: dedupRows.below,
     noop,
-    ...(input.noopPayload !== undefined ? { noopPayload: input.noopPayload } : {}),
     foldedLines: input.foldedLines ?? 0,
-    ...(input.bypassConsumed ? { bypassConsumed: true as const } : {}),
   };
   runtime.pieces.push(piece);
   if (input.kind === "replace") runtime.replaceCount += 1;
@@ -499,7 +534,11 @@ export async function executeBatchMember(input: BatchMemberInput): Promise<TResu
   if (noop) runtime.noops += 1;
   else runtime.applied += 1;
   runtime.warnings.push(...piece.warnings);
-  if (!input.member.last) return batchPlaceholder(input.member, piece, base.snapshotId);
+  if (!input.member.last) {
+    const placeholder = batchPlaceholder(input.member, piece, base.snapshotId);
+    placeholderResults.set(input.member.id, placeholder);
+    return placeholder;
+  }
   return finishBatch(input.member, input.signal);
 }
 
@@ -512,62 +551,114 @@ function composeBatchLines(baseContent: string, pieces: BatchPiece[]): string {
   return composed;
 }
 
+function mergeInsertPairs(pieces: BatchPiece[]): BatchPiece[] {
+  const byAnchor = new Map<number, BatchPiece[]>();
+  for (const piece of pieces) {
+    if (piece.kind !== "insert" || piece.start !== piece.end || piece.foldedLines === 0) continue;
+    const group = byAnchor.get(piece.start) ?? [];
+    group.push(piece);
+    byAnchor.set(piece.start, group);
+  }
+  const partnerOf = new Map<BatchPiece, BatchPiece>();
+  for (const group of byAnchor.values()) {
+    if (group.length !== 2) continue;
+    const [first, second] = group;
+    if (first.direction === undefined || second.direction === undefined || first.direction === second.direction) continue;
+    partnerOf.set(first, second);
+    partnerOf.set(second, first);
+  }
+  const merged: BatchPiece[] = [];
+  const consumed = new Set<BatchPiece>();
+  for (const piece of pieces) {
+    if (consumed.has(piece)) continue;
+    const partner = partnerOf.get(piece);
+    if (partner === undefined) {
+      merged.push(piece);
+      continue;
+    }
+    consumed.add(piece);
+    consumed.add(partner);
+    const before = piece.direction === "before" ? piece : partner;
+    const after = piece.direction === "before" ? partner : piece;
+    merged.push({
+      ...before,
+      order: Math.min(before.order, after.order),
+      newLines: [...before.newLines, ...after.newLines.slice(1)],
+      warnings: [...before.warnings, ...after.warnings],
+      autoFixes: before.autoFixes + after.autoFixes,
+      dedupAbove: [...before.dedupAbove, ...after.dedupAbove],
+      dedupBelow: [...before.dedupBelow, ...after.dedupBelow],
+      foldedLines: before.foldedLines + after.foldedLines - 1,
+    });
+  }
+  return merged;
+}
+
+function dedupCutNoops(pieces: BatchPiece[]): BatchPiece[] {
+  return pieces.filter((piece) => piece.noop && piece.autoFixes > 0).sort((a, b) => a.order - b.order);
+}
+
+function dedupCutNoopWarning(noops: BatchPiece[]): string {
+  return boundaryDedupNoopWarning(noops.map((piece) => piece.order), noops.reduce((sum, piece) => sum + piece.autoFixes, 0));
+}
+
 async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise<TResult> {
   const runtime = batches.get(member.batchKey);
   if (!runtime || !runtime.base || !runtime.paths) throw new Error(`[E_STALE_ANCHOR] Batch ${member.display} is no longer tracked. Call read for fresh anchors.`);
   const base = runtime.base;
   const paths = runtime.paths;
   if (runtime.failed) throw batchAbortedError(runtime);
+  const executedOrders = new Set(runtime.pieces.map((piece) => piece.order));
   for (const id of runtime.memberIds) {
     const planned = plan.get(id);
     if (!planned) continue;
+    if (executedOrders.has(planned.order)) continue;
     try {
       const normalized = normReq(planned.args);
       if (planned.kind === "replace") assertReq(normalized);
       else assertInsertReq(normalized);
     } catch (error) {
-      noteBatchFailure(member, error);
+      noteBatchFailure(planned, error);
       throw batchAbortedError(runtime);
     }
   }
   const appliedPieces = runtime.pieces.filter((piece) => !piece.noop);
   if (appliedPieces.length === 0) {
-    for (const piece of runtime.pieces) {
-      if (piece.autoFixes > 0 && piece.noopPayload !== undefined) markBoundaryNoop(runtime.target, piece.noopPayload);
-    }
+    const dedupNoops = dedupCutNoops(runtime.pieces);
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
-    return combinedNoop(paths.displayPath, member, runtime, snapshotId);
+    return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
-  const ordered = [...appliedPieces].sort((a, b) => a.start - b.start);
+  const effectivePieces = mergeInsertPairs(appliedPieces);
+  const ordered = [...effectivePieces].sort((a, b) => a.start - b.start);
   for (let i = 1; i < ordered.length; i++) {
     const prev = ordered[i - 1]!;
     const current = ordered[i]!;
     if (current.start <= prev.end) {
-      restoreBatchBypasses(runtime);
+      discardBatchState(runtime);
       throw new Error(`[E_BATCH_OVERLAP] Batch ${runtime.display} has overlapping ranges: ${formatBatchPiece(prev)} overlaps ${formatBatchPiece(current)}`);
     }
   }
-  const composed = composeBatchLines(base.content, appliedPieces);
+  const composed = composeBatchLines(base.content, effectivePieces);
   const warnings = [...runtime.warnings];
   if (base.hadUtf8DecodeErrors) warnings.push("Non-UTF-8 bytes were shown as U+FFFD; this edit rewrote the file as UTF-8.");
-  const dedupTotal = runtime.pieces.reduce((sum, piece) => sum + piece.autoFixes, 0);
+  const dedupTotal = effectivePieces.reduce((sum, piece) => sum + piece.autoFixes, 0);
   if (dedupTotal > 0) warnings.push(boundaryDedupWarning(dedupTotal));
+  const dedupNoops = dedupCutNoops(runtime.pieces);
+  if (dedupNoops.length > 0) warnings.push(dedupCutNoopWarning(dedupNoops));
   try {
     await throwIfStrictInput(dedupeWarnings(warnings));
     assertNotEmpty(base.content, composed);
     assertLineLimit(composed, paths.displayPath, MAX_HASH_LINES);
     const finalBytes = base.bom + restoreEndings(composed, base.ending);
-    if (Buffer.byteLength(finalBytes, "utf-8") > MAX_BYTES) {
-      throw new Error(`[E_FILE_TOO_LARGE] File is too large: ${paths.displayPath} (exceeds the ${MAX_BYTES / (1024 * 1024)}MB size limit). For very large files, use write.`);
-    }
+    assertByteLimit(finalBytes, paths.displayPath);
   } catch (error) {
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     if (error instanceof Error) error.message = withAbortSuffix(error.message, runtime.display);
     throw error;
   }
   if (composed === base.content) {
     const snapshotId = await safeSnapId(paths.absolutePath, "noop edit");
-    return combinedNoop(paths.displayPath, member, runtime, snapshotId);
+    return combinedNoop(paths.displayPath, member, runtime, snapshotId, dedupNoops);
   }
   abortIf(signal);
   let currentRaw: string;
@@ -575,14 +666,14 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     currentRaw = await readFile(runtime.target, "utf-8");
   } catch (error) {
     if (errCode(error) !== "ENOENT") throw error;
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     throw new Error(`[E_OP_ABORTED] Batch ${runtime.display} aborted: the file was deleted after the batch started.`);
   }
   if (toLF(stripBOM(currentRaw).text) !== base.content) {
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     throw new Error(`[E_OP_ABORTED] Batch ${runtime.display} aborted: the file changed after the batch started. Call read for fresh anchors and retry.`);
   }
-  const preflightSpans = appliedPieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length }));
+  const preflightSpans = effectivePieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length }));
   try {
     await lineHashes(composed, runtime.target, {
       content: base.content,
@@ -590,7 +681,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
       spans: preflightSpans,
     }, undefined, false, true);
   } catch (error) {
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     if (error instanceof Error) error.message = withAbortSuffix(error.message, runtime.display);
     throw error;
   }
@@ -602,7 +693,7 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     resultContent: composed,
   });
   if (!undo.persisted) {
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     throw new Error(`[E_UNDO_UNAVAILABLE] Could not persist undo history for ${paths.displayPath}. Aborts batch ${runtime.display}.`);
   }
   try {
@@ -610,13 +701,12 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     await writeAtomic(paths.absolutePath, base.bom + restoreEndings(composed, base.ending), base.identity);
   } catch (error) {
     await undo.restore();
-    restoreBatchBypasses(runtime);
+    discardBatchState(runtime);
     if (error instanceof Error) error.message = withAbortSuffix(error.message, runtime.display);
     throw error;
   }
-  clearBoundaryBypass(runtime.target);
   const updatedSnapshotId = await safeSnapId(paths.absolutePath, "post-edit");
-  const spans = appliedPieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length }));
+  const spans = effectivePieces.map((piece) => ({ start: piece.start - 1, end: piece.end - 1, replacementCount: piece.newLines.length, dedupAbove: piece.dedupAbove, dedupBelow: piece.dedupBelow }));
   let resultHashes: string[];
   try {
     resultHashes = await lineHashes(composed, runtime.target, {
@@ -636,6 +726,8 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
     const gross = Math.max(0, piece.newLines.length - piece.autoFixes);
     added += piece.kind === "insert" ? Math.max(0, gross - piece.foldedLines) : gross;
   }
+  const dedupAboveRows = ordered.flatMap((piece) => piece.dedupAbove);
+  const dedupBelowRows = ordered.flatMap((piece) => piece.dedupBelow);
   const header = batchHeader(member);
   const changed = buildChanged(
     {
@@ -654,17 +746,17 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
         addedLines: added,
         removedLines: removed,
       },
-      boundaryDedupAbove: [],
-      boundaryDedupBelow: [],
+      boundaryDedupAbove: dedupAboveRows,
+      boundaryDedupBelow: dedupBelowRows,
       spans,
     },
     batchVerb(runtime),
     await getDiffContextLines(),
   );
   changed.details.diff = `${header}\n${changed.details.diff}`;
-  changed.details.diffLineNumbers?.unshift(undefined);
+  changed.details.diffLineNumbers?.unshift(null);
   try {
-    markServed(runtime.target, buildServedMap(resultHashes, splitLines(composed), servedHashesFromDiff(changed.details.diff)), new Set(resultHashes));
+    serveRows(runtime.target, resultHashes, splitLines(composed), servedHashesFromDiff(changed.details.diff));
   } catch (error) {
     console.error("Failed to mark batch diff served:", error);
   }
@@ -674,8 +766,10 @@ async function finishBatch(member: PlannedMember, signal?: AbortSignal): Promise
   return changed;
 }
 
-async function combinedNoop(path: string, member: PlannedMember, runtime: BatchState, snapshotId: string | undefined): Promise<TResult> {
+async function combinedNoop(path: string, member: PlannedMember, runtime: BatchState, snapshotId: string | undefined, dedupNoops: BatchPiece[]): Promise<TResult> {
   const executed = runtime.applied + runtime.noops;
+  const warnings = [...runtime.warnings];
+  if (dedupNoops.length > 0) warnings.push(dedupCutNoopWarning(dedupNoops));
   const noop = buildNoop(
     {
       path,
@@ -687,7 +781,7 @@ async function combinedNoop(path: string, member: PlannedMember, runtime: BatchS
         addedLines: 0,
         removedLines: 0,
       },
-      warnings: dedupeWarnings(runtime.warnings),
+      warnings: dedupeWarnings(warnings),
       boundaryRemovedLines: 0,
     },
     "Batch",
@@ -707,7 +801,10 @@ export async function finalizeTurn(toolCallIds: string[]): Promise<void> {
   for (const key of keys) {
     const runtime = batches.get(key);
     if (!runtime) continue;
-    for (const id of runtime.memberIds) plan.delete(id);
+    for (const id of runtime.memberIds) {
+      plan.delete(id);
+      placeholderResults.delete(id);
+    }
     batches.delete(key);
   }
 }

@@ -1,4 +1,6 @@
 import xxhash from "xxhash-wasm";
+import { truncateToBytes } from "../utils";
+import { MAX_HASH_SOURCE_BYTES } from "../constants";
 
 export type Hasher = {
 	h32(input: string, seed?: number): number;
@@ -30,4 +32,16 @@ export function xxh32(input: string, seed = 0): number {
 
 export function contentChecksum(content: string): string {
 	return getH().h64ToString(content);
+}
+
+export function canon(line: string): string {
+  return line.replace(/\r/g, "").trimEnd();
+}
+
+export function hashSource(line: string): string {
+  return truncateToBytes(canon(line), MAX_HASH_SOURCE_BYTES);
+}
+
+export function lineChecksum(line: string): string {
+  return contentChecksum(hashSource(line));
 }

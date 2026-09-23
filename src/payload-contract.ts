@@ -1,5 +1,5 @@
 import { Type } from "typebox";
-import { isRec, normalizeAnchors, normalizeFilePath, rejectUnknownFields, assertNoNul } from "./utils";
+import { isRec, normalizeRequest, rejectUnknownFields, assertNoNul } from "./utils";
 
 const replacementLinesSchema = Type.Array(
   Type.String({
@@ -8,18 +8,18 @@ const replacementLinesSchema = Type.Array(
   }),
   {
     description:
-      "One string per line. Use [] to delete the range.",
+      "One string per line. Use [] to delete the range; [\"\"] is a single blank line.",
   },
 );
 
 const removeFromSchema = Type.String({
   description:
-    "Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. Marks the FIRST line to remove (inclusive)",
+    "Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. Marks the FIRST line to remove (inclusive)",
 });
 
 const removeToSchema = Type.String({
   description:
-    "Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. Marks the LAST line to remove (inclusive)",
+    "Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. Marks the LAST line to remove (inclusive)",
 });
 const pathRequiredSchema = Type.String({
   description:
@@ -77,20 +77,12 @@ export function assertReq(request: unknown): asserts request is ReqParams {
   assertNoNul(request.replacement_lines);
 }
 
-export function normReq(input: unknown): unknown {
-  if (!isRec(input)) {
-    return input;
-  }
-  const record: Record<string, unknown> = { ...input };
-  normalizeFilePath(record);
-  normalizeAnchors(record);
-  return record;
-}
+export { normalizeRequest as normReq } from "./utils";
 
 export function getPreviewInput(args: unknown): { path?: string; remove_from: string; remove_to: string; replacement_lines: string[] } | null {
   let normalized: unknown;
   try {
-    normalized = normReq(args);
+    normalized = normalizeRequest(args);
   } catch {
     return null;
   }

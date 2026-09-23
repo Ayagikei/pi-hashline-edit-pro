@@ -21,7 +21,7 @@ export interface FileIdentity {
 }
 
 function sameIdentity(
-  actual: Pick<Awaited<ReturnType<typeof stat>>, "dev" | "ino">,
+  actual: FileIdentity,
   expected: FileIdentity,
 ): boolean {
   return actual.dev === expected.dev && actual.ino === expected.ino;
@@ -152,6 +152,7 @@ export async function writeAtomic(
   path: string,
   content: string,
   expectedIdentity?: FileIdentity,
+  restoreMode?: number,
 ): Promise<void> {
   const targetPath = await resolveTarget(path);
 
@@ -193,8 +194,9 @@ export async function writeAtomic(
   const tempHandle = await open(tempPath, "wx", 0o600);
   try {
     await tempHandle.writeFile(content, "utf-8");
-    if (existingStats) {
-      await tempHandle.chmod(existingStats.mode & 0o7777);
+    const mode = existingStats ? existingStats.mode & 0o7777 : restoreMode;
+    if (mode !== undefined) {
+      await tempHandle.chmod(mode);
     }
     await tempHandle.sync();
   } catch (error: unknown) {

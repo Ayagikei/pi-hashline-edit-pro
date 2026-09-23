@@ -2,6 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export const mockIsolatedFiles = [
   "test/core/config-atomic.test.ts",
+  "test/core/config-lock-identity.test.ts",
   "test/core/hash-store-open-errors.test.ts",
   "test/core/hash-store-prune-errors.test.ts",
   "test/core/validation-access.test.ts",
@@ -11,6 +12,7 @@ export const mockIsolatedFiles = [
   "test/core/startup.test.ts",
   "test/core/hash-store-engine.test.ts",
   "test/tools/grep-pool-skip.test.ts",
+  "test/core/auto-read-all-fallback.test.ts",
 ];
 
 export const heavyTestFiles = [

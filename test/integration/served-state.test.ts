@@ -3,7 +3,7 @@ import { readFile, writeFile } from "fs/promises";
 import { lineHashes } from "../../src/hashline";
 import { shutdownHashStore } from "../../src/hash-store";
 import { ownersForPath, initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
-import { withTempFile, setupIntegrationTest, getText, extractHash } from "../support/fixtures";
+import { withTempFile, setupIntegrationTest, getText, extractHash, makePiStub } from "../support/fixtures";
 import { toCwd } from "../../src/paths";
 import { resolveTarget } from "../../src/fs-write";
 
@@ -378,20 +378,8 @@ describe("served-state range verification", () => {
   it("clears served state on write and re-serves via the auto-read block", async () => {
     await withTempFile("sample.ts", "a\nb\nc\n", async ({ cwd }) => {
       const { default: register } = await import("../../index");
-      const handlers = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
-      const tools = new Map<string, { execute: (...args: unknown[]) => Promise<any> }>();
-      const pi = {
-        registerTool(tool: { name: string; execute: (...args: unknown[]) => Promise<any> }) {
-          tools.set(tool.name, tool);
-        },
-        registerCommand() {},
-        getActiveTools: () => [],
-        setActiveTools() {},
-        on(event: string, handler: unknown) {
-          handlers.set(event, handler as (event: unknown, ctx: unknown) => Promise<unknown>);
-        },
-      } as never;
-      register(pi as never);
+      const { pi, handlers, tools } = makePiStub();
+      register(pi);
       await handlers.get("session_start")!({}, { cwd, ui: { notify() {} } });
       const ctx = { cwd, ui: { notify() {} } };
       const readResult = await tools.get("read")!.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);

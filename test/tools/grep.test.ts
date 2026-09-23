@@ -1,12 +1,12 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { mkdir, writeFile, readFile, mkdtemp, rm } from "fs/promises";
+import { mkdir, writeFile, readFile, mkdtemp } from "fs/promises";
 import { join } from "path";
 import { tmpdir } from "os";
-import { loadHashStore, getSnapshot, shutdownHashStore } from "../../src/hash-store";
+import { loadHashStore, getSnapshot } from "../../src/hash-store";
 import { resolveTarget } from "../../src/fs-write";
 import { ownersForPath, initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { toCwd } from "../../src/paths";
-import { withTempFile, withTempDir, withHome, makeFakePiRegistry, setupIntegrationTest, getText, extractHash } from "../support/fixtures";
+import { closeHashStore, withTempFile, withTempDir, withHome, makeFakePiRegistry, setupIntegrationTest, getText, extractHash, rmRetry } from "../support/fixtures";
 import register from "../../index";
 
 beforeEach(async () => {
@@ -66,6 +66,54 @@ describe("grep tool", () => {
       );
       expect(edit.content[0].text).toContain("Successfully replaced");
       expect(await import("fs/promises").then((m) => m.readFile(path, "utf-8"))).toBe("alpha\nBETA\ngamma\n");
+    });
+  });
+
+  it("serves anchors for a line changed since the last read so a replace edits immediately", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\ngamma\n", async ({ cwd, path }) => {
+      const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
+      await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
+      await writeFile(path, "alpha\nBETA-EXTERNAL\ngamma\n", "utf-8");
+
+      const grepTool = getTool("anchor_grep");
+      const result = await grepTool.execute(
+        "g1",
+        { pattern: "BETA-EXTERNAL", path: "sample.ts" },
+        undefined, undefined, ctx,
+      );
+      const betaHash = extractHash(getText(result).split("\n").find((l) => l.includes("│BETA-EXTERNAL"))!);
+
+      const edit = await getTool("replace").execute(
+        "e1",
+        { remove_from: betaHash, remove_to: betaHash, replacement_lines: ["BETA"] },
+        undefined, undefined, ctx,
+      );
+      expect(edit.content[0]!.text).toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nBETA\ngamma\n");
+    });
+  });
+
+  it("serves anchors for a line appended since the last read so a replace edits immediately", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd, path }) => {
+      const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
+      await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
+      await writeFile(path, "alpha\nbeta\ngamma\n", "utf-8");
+
+      const grepTool = getTool("anchor_grep");
+      const result = await grepTool.execute(
+        "g1",
+        { pattern: "gamma", path: "sample.ts" },
+        undefined, undefined, ctx,
+      );
+      const gammaHash = extractHash(getText(result).split("\n").find((l) => l.includes("│gamma"))!);
+
+      const edit = await getTool("replace").execute(
+        "e1",
+        { remove_from: gammaHash, remove_to: gammaHash, replacement_lines: ["GAMMA"] },
+        undefined, undefined, ctx,
+      );
+      expect(edit.content[0]!.text).toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\nGAMMA\n");
     });
   });
 
@@ -219,8 +267,8 @@ async function withSystemTempDir(prefix: string, run: (dir: string) => Promise<v
   try {
     await run(dir);
   } finally {
-    shutdownHashStore();
-    await rm(dir, { recursive: true, force: true });
+    await closeHashStore();
+    await rmRetry(dir);
     restoreHome();
   }
 }
@@ -771,14 +819,14 @@ describe("anchor_grep display", () => {
   it("renderResult shows hits without a summary line", async () => {
     const { renderGrepResult } = await import("../../src/grep");
     const component = renderGrepResult(
-      { content: [{ type: "text", text: "=== a.txt ===\n1 │ ab12│beta" }] },
+      { content: [{ type: "text", text: "=== a.txt ===\n1 │ abde│beta" }] },
       { isPartial: false, expanded: true },
       theme,
       plainContext,
     );
     const rendered = (component as unknown as { text: string }).text ?? String(component);
     expect(rendered).toContain("=== a.txt ===");
-    expect(rendered).toContain("1 │ ab12│beta");
+    expect(rendered).toContain("1 │ abde│beta");
     expect(rendered).not.toContain("match in");
   });
 
@@ -812,26 +860,26 @@ describe("anchor_grep display", () => {
     const { renderGrepResult } = await import("../../src/grep");
     const markTheme = { fg: (area: string, text: string) => `<${area}>${text}</>`, bold: (text: string) => text } as never;
     const component = renderGrepResult(
-      { content: [{ type: "text", text: "=== a.txt ===\n1 │ ab12│beta gamma beta" }] },
+      { content: [{ type: "text", text: "=== a.txt ===\n1 │ abde│beta gamma beta" }] },
       { isPartial: false, expanded: true },
       markTheme,
       { ...plainContext, args: { pattern: "beta" } },
     );
     const rendered = (component as unknown as { text: string }).text ?? String(component);
-    expect(rendered).toContain("1 │ ab12│<accent>beta</> gamma <accent>beta</>");
+    expect(rendered).toContain("1 │ abde│<accent>beta</> gamma <accent>beta</>");
   });
 
   it("renderResult leaves rows plain without usable args", async () => {
     const { renderGrepResult } = await import("../../src/grep");
     const markTheme = { fg: (area: string, text: string) => `<${area}>${text}</>`, bold: (text: string) => text } as never;
     const component = renderGrepResult(
-      { content: [{ type: "text", text: "1 │ ab12│beta" }] },
+      { content: [{ type: "text", text: "1 │ abde│beta" }] },
       { isPartial: false, expanded: true },
       markTheme,
       plainContext,
     );
     const rendered = (component as unknown as { text: string }).text ?? String(component);
-    expect(rendered).toContain("1 │ ab12│beta");
+    expect(rendered).toContain("1 │ abde│beta");
     expect(rendered).not.toContain("<accent>");
   });
 
@@ -839,7 +887,7 @@ describe("anchor_grep display", () => {
     const { renderGrepResult } = await import("../../src/grep");
     const markTheme = { fg: (area: string, text: string) => `<${area}>${text}</>`, bold: (text: string) => text } as never;
     const component = renderGrepResult(
-      { content: [{ type: "text", text: "1 │ ab12│a.c axc" }] },
+      { content: [{ type: "text", text: "1 │ abde│a.c axc" }] },
       { isPartial: false, expanded: true },
       markTheme,
       { ...plainContext, args: { pattern: "a.c", literal: true } },

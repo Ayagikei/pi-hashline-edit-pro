@@ -6,7 +6,7 @@ import { contentChecksum } from "../../src/hashline/hasher";
 import { hashSource } from "../../src/hashline";
 import { ANCHOR_COUNT, anchorAt } from "../../src/hashline/alphabet";
 import { HASH_PROBE_STRIDE } from "../../src/hashline/hash";
-import { initRegistry, resetRegistryForTests, allocateAnchor, mintAnchor, alignOwnership, foldRegistryEvents, parseRegistryLog, buildCompactedLog, shouldCompactSidecar, ownerOf, MINT_PROBE_LIMIT } from "../../src/anchor-registry";
+import { initRegistry, resetRegistryForTests, allocateAnchor, mintAnchor, alignOwnership, foldRegistryEvents, parseRegistryLog, buildCompactedLog, shouldCompactSidecar, ownerOf, SIDECAR_COMPACT_LINE_BYTES, SIDECAR_HEADER_BYTES, MINT_PROBE_LIMIT } from "../../src/anchor-registry";
 import { resolveEditTarget } from "../../src/edit-common";
 import { buildServedMap } from "../../src/served";
 import { tryReadNormFile } from "../../src/file-reader";
@@ -206,6 +206,22 @@ describe("buildCompactedLog roundtrip", () => {
     expect(minted.has("BBBB")).toBe(true);
     expect(minted.has("CCCC")).toBe(true);
     expect(minted.has("DDDD")).toBe(true);
+  });
+});
+
+describe("buildCompactedLog byte bounds", () => {
+  it("keeps every compacted line within the header read cap", () => {
+    const rows = Array.from({ length: 5000 }, (_, i) => [String(i).padStart(4, "0"), "0123456789abcdef"]);
+    const state = foldRegistryEvents([{ kind: "allocate", path: "/big.ts", rows }] as never);
+    const log = buildCompactedLog("sessfile", state as never);
+    const lines = log.trimEnd().split("\n");
+    expect(lines.length).toBeGreaterThan(1);
+    const maxLineBytes = Math.max(...lines.map((line) => Buffer.byteLength(line, "utf-8")));
+    expect(maxLineBytes).toBeLessThanOrEqual(SIDECAR_COMPACT_LINE_BYTES);
+    expect(maxLineBytes).toBeLessThanOrEqual(SIDECAR_HEADER_BYTES);
+    expect(maxLineBytes).toBeGreaterThan(SIDECAR_HEADER_BYTES / 2);
+    const owned = (foldRegistryEvents(parseRegistryLog(log)) as unknown as { owned: Map<string, unknown> }).owned;
+    expect(owned.size).toBe(5000);
   });
 });
 

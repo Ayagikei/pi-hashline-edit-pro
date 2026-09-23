@@ -37,12 +37,8 @@ export async function withBusyRetryAsync<T>(fn: () => T): Promise<T> {
   throw lastError;
 }
 
-export function retriedWrite(stmt: { run(...params: (string | number)[]): unknown }): (...params: (string | number)[]) => void {
+export function retriedWrite(stmt: { run(...params: (string | number | null)[]): unknown }): (...params: (string | number | null)[]) => void {
   return (...params) => {
     withBusyRetry(() => { stmt.run(...params); });
   };
-}
-
-export async function openDbWithBusyRetryAsync<T>(fn: () => T): Promise<T> {
-  return withBusyRetryAsync(fn);
 }

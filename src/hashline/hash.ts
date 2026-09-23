@@ -1,8 +1,8 @@
-import { splitLines, truncateToBytes, getCached } from "../utils";
-import { MAX_HASH_SOURCE_BYTES } from "../constants";
+import { splitLines, getCached } from "../utils";
 import { loadHashStore, type HashStore } from "../hash-store";
 import { allocateFileAnchors } from "../anchor-registry";
-import { xxh32, initHasher } from "./hasher";
+import { xxh32, initHasher, canon, hashSource, lineChecksum } from "./hasher";
+export { canon, hashSource, lineChecksum };
 import { HASH_LEN, ANCHOR_COUNT, anchorAt, HASH_CLASS, HASH_RUN } from "./alphabet";
 export { initHasher, HASH_LEN, HASH_CLASS, HASH_RUN };
 
@@ -14,11 +14,6 @@ export const HASH_SPACE = ANCHOR_COUNT;
 export const MAX_HASH_LINES = HASH_SPACE;
 
 export const HASH_PROBE_STRIDE = 836286;
-
-
-function hashAt(idx: number): string {
-  return anchorAt(idx);
-}
 
 export const HL_PREFIX_PLUS_RE = new RegExp(
 	`^\\+${HASH_RUN}│`,
@@ -53,14 +48,6 @@ export function stripRowPrefix(line: string): StrippedRow {
 	return { text: line, kind: null, hash: undefined };
 }
 
-export function canon(line: string): string {
-	return line.replace(/\r/g, "").trimEnd();
-}
-
-export function hashSource(line: string): string {
-	return truncateToBytes(canon(line), MAX_HASH_SOURCE_BYTES);
-}
-
 const BITSET_WORDS = Math.ceil(HASH_SPACE / 32);
 
 function getBit(bits: Uint32Array, idx: number): boolean {
@@ -88,12 +75,12 @@ function assignHash(used: Uint32Array, baseIdx: number, hint: { value: number })
   if (!getBit(used, baseIdx)) {
     setBit(used, baseIdx);
     hint.value = baseIdx + HASH_PROBE_STRIDE;
-    return hashAt(baseIdx);
+    return anchorAt(baseIdx);
   }
   const nextIdx = nextZeroBit(used, hint.value);
   setBit(used, nextIdx);
   hint.value = nextIdx + HASH_PROBE_STRIDE;
-  return hashAt(nextIdx);
+  return anchorAt(nextIdx);
 }
 
 export function _lineHashesPure(content: string): string[] {

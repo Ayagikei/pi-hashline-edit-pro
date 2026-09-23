@@ -13,13 +13,15 @@ export interface EditToolFlags {
   strictInput: boolean;
   boundaryDedupMode: BoundaryDedupMode;
   autoRead: boolean;
+  autoReadAllActive: boolean;
 }
 
 export const DEFAULT_EDIT_FLAGS: EditToolFlags = {
   requirePath: false,
   strictInput: false,
   boundaryDedupMode: "on",
-  autoRead: true
+  autoRead: true,
+  autoReadAllActive: false
 };
 
 export async function currentEditFlags(): Promise<EditToolFlags> {
@@ -28,7 +30,8 @@ export async function currentEditFlags(): Promise<EditToolFlags> {
     requirePath: config.requirePath === true,
     strictInput: config.strictInput === true,
     boundaryDedupMode: config.boundaryDedupMode ?? "on",
-    autoRead: config.autoRead !== false
+    autoRead: config.autoRead !== false,
+    autoReadAllActive: (config.autoReadAll ?? "off") !== "off"
   };
 }
 
@@ -38,13 +41,17 @@ export function withReplacePrompts(base: { description: string; snippet: string;
   let guidelines = [...base.guidelines];
   if (!flags.autoRead) {
     description = description.replace(" Anchor follow-up edits on the `+anchor│` and ` anchor│` rows of the post-edit diff instead of re-reading.", "");
-    guidelines = guidelines.map((guideline) => guideline.includes("post-edit diff") ? "`replace`: one batch per file per turn; verify each result before the next edit on that file." : guideline);
+    guidelines = guidelines.filter((guideline) => !guideline.includes("post-edit diff"));
+    description = description.replace("and the last call shows the combined diff,", "and the last call shows the combined result,");
   }
   const descriptionParts = [description];
   if (flags.requirePath) {
     descriptionParts.push("Also give `path` matching the file the anchors were served for; it is required and must match anchor ownership.");
     snippetParts.push("; include `path` (required)");
     guidelines.push("`replace`: include `path` matching the file the anchors were served for; it is required.");
+  } else {
+    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
+    guidelines.push("`replace`: path resolution is anchor-only; don't pass `path`.");
   }
   if (flags.strictInput) {
     descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
@@ -61,25 +68,42 @@ export function withReplacePrompts(base: { description: string; snippet: string;
 }
 
 export function withReadPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...base.guidelines] };
-  const guidelines = base.guidelines.map((guideline) => guideline.startsWith("`read`: call again after an edit") ? "`read`: call again after an edit when you need anchors you lack." : guideline);
-  return { description: base.description, snippet: base.snippet, guidelines };
+  if (flags.autoReadAllActive) {
+    const rewritten = base.guidelines
+      .filter((guideline) => !guideline.includes("call again after an edit"))
+    return { description: base.description, snippet: base.snippet, guidelines: [...rewritten] };
+  }
+  const withoutAutoReadAll = base.guidelines.filter((guideline) => !guideline.includes("E_AUTO_READ_ALL"))
+  if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...withoutAutoReadAll] };
+  const guidelines = [...withoutAutoReadAll];
+  const mapped = guidelines.map((guideline) => guideline.startsWith("`read`: call again after an edit") ? "`read`: call again after an edit when you need anchors you lack." : guideline);
+  return { description: base.description, snippet: base.snippet, guidelines: mapped };
 }
 
 export function withInsertPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
-  const descriptionParts = [base.description];
+  const baseDescription = flags.autoRead ? base.description : base.description.replace("and the last call shows the combined diff,", "and the last call shows the combined result,");
+  const descriptionParts = [baseDescription];
   const snippetParts = [base.snippet];
   const guidelines = [...base.guidelines];
   if (flags.requirePath) {
     descriptionParts.push("Also give `path` matching the file the anchor was served for; it is required and must match anchor ownership.");
     snippetParts.push("; include `path` (required)");
     guidelines.push("`insert`: include `path` matching the file the anchor was served for; it is required.");
+  } else {
+    descriptionParts.push("Path resolution is anchor-only; do not pass `path`.");
+    guidelines.push("`insert`: path resolution is anchor-only; don't pass `path`.");
   }
   if (flags.strictInput) {
     descriptionParts.push("Strict-input mode is on: auto-fixable slips are rejected instead of fixed with warnings.");
     guidelines.push("`insert`: strict-input is on: auto-fixable slips are rejected instead of fixed.");
   }
   return { description: descriptionParts.join(" "), snippet: snippetParts.join(""), guidelines };
+}
+
+export function withUndoPrompts(base: { description: string; snippet: string; guidelines: string[] }, flags: EditToolFlags): { description: string; snippet: string; guidelines: string[] } {
+  if (flags.autoRead) return { description: base.description, snippet: base.snippet, guidelines: [...base.guidelines] };
+  const guidelines = base.guidelines.map((guideline) => guideline.includes("bad diff") ? "`undo_last_change`: only the last `replace`/`insert` per file is undoable; a `write` clears it, so undo right after a bad edit — review what you're restoring." : guideline);
+  return { description: base.description, snippet: base.snippet, guidelines };
 }
 export function resolveEditTarget(removeFrom: string, removeTo?: string): string {
   const refs = [removeFrom, removeTo].filter((value): value is string => typeof value === "string");

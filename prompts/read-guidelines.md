@@ -1,3 +1,2 @@
-- `read`: view files with `read`, not `bash` (`sed`/`grep`/`cat`) — only `read` rows carry usable anchors.
-- `read`: call before `replace` when you need fresh anchors.
 - `read`: call again after an edit when you need anchors you lack — post-edit diff `+anchor│`/` anchor│` rows and any served `anchor│content` rows already carry fresh anchors for the changed range.
+- `read`: `E_AUTO_READ_ALL` on an attached file means its content is still exactly as it was when attached at the start of this session.

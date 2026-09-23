@@ -7,7 +7,7 @@ import { mkMdTheme, renderEditResult } from "../../src/replace-render";
 import { fmtDedupRow, withDedupRows, isDedupRow, isChangeRow } from "../../src/replace-response";
 import { assertReq, assertInsertReq, getPreviewInput } from "../../src/payload-contract";
 import { decodeStringArray, cntDiff } from "../../src/utils";
-import { parseHashList, parseServedMap } from "../../src/hash-store/validation";
+import { parseHashList } from "../../src/hash-store/validation";
 import { tryReadNormFile } from "../../src/file-reader";
 import { commitEdit } from "../../src/commit";
 import { insertPreview } from "../../src/insert";
@@ -93,6 +93,32 @@ describe("gap dedup rows", () => {
     expect(out.diff).toContain("a");
     expect(out.diff).toContain("context");
   });
+  it("caps dedup rows at the byte budget and reports the omissions", () => {
+    const above = Array.from({ length: 400 }, () => "x".repeat(200));
+    const below = Array.from({ length: 400 }, () => "y".repeat(200));
+    const diff = " aaa\n-   │bbb\n+XYZ│BBB\n ccc";
+    const out = withDedupRows(diff, [1, undefined, 2, 3], above, below);
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+    expect(out.diff).toContain("not shown again");
+    expect(out.lineNumbers).toHaveLength(out.diff.split("\n").length);
+    const dedupRows = out.diff.split("\n").filter((row) => row.startsWith("dedup│") && !row.includes("not shown again"));
+    expect(dedupRows.length).toBeGreaterThan(0);
+    expect(dedupRows.length).toBeLessThan(400);
+  });
+  it("reserves the omission note before capping dedup rows", () => {
+    const rows = Array.from({ length: 300 }, () => "z".repeat(190));
+    const out = withDedupRows("+a\n-b", [1, 2], rows, []);
+    expect(out.diff).toContain("not shown again");
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(50 * 1024);
+    expect(out.diff.split("\n")).toHaveLength(out.lineNumbers.length);
+  });
+  it("honors an explicit byte budget and keeps the note inside it", () => {
+    const rows = Array.from({ length: 100 }, () => "z".repeat(50));
+    const out = withDedupRows("+a\n-b", [1, 2], rows, [], 400);
+    expect(out.diff).toContain("not shown again");
+    expect(Buffer.byteLength(out.diff, "utf-8")).toBeLessThanOrEqual(400);
+    expect(out.diff.split("\n")).toHaveLength(out.lineNumbers.length);
+  });
 });
 
 describe("gap payload contract", () => {
@@ -159,9 +185,6 @@ describe("gap validation with context", () => {
     called = false;
     expect(parseHashList(JSON.stringify(["ZZ"]), () => { called = true; }, "ctx")).toBeUndefined();
     expect(called).toBe(true);
-    called = false;
-    expect(parseServedMap("not json", () => { called = true; }, "ctx")).toBeUndefined();
-    expect(called).toBe(true);
   });
   it("covers stringify fallback via mock", () => {
     const payload = JSON.stringify("ZZ");
@@ -170,12 +193,6 @@ describe("gap validation with context", () => {
     expect(parseHashList(payload, () => { called = true; })).toBeUndefined();
     expect(called).toBe(true);
     spy.mockRestore();
-    const payload2 = JSON.stringify({ bad: "x" });
-    const spy2 = vi.spyOn(JSON, "stringify").mockImplementationOnce(() => { throw new Error("boom"); });
-    let called2 = false;
-    expect(parseServedMap(payload2, () => { called2 = true; })).toBeUndefined();
-    expect(called2).toBe(true);
-    spy2.mockRestore();
   });
 });
 
@@ -263,7 +280,6 @@ describe("gap commit guards", () => {
         resultHashes: ["arvm"],
         totalAddedLines: 1,
         totalRemovedLines: 1,
-        hadBoundaryDedup: false,
         boundaryRemovedLines: 0,
         boundaryRemovedLineTexts: [],
         boundaryDedupAbove: [],
@@ -289,7 +305,6 @@ describe("gap commit guards", () => {
         resultHashes: ["arvm"],
         totalAddedLines: 1,
         totalRemovedLines: 1,
-        hadBoundaryDedup: false,
         boundaryRemovedLines: 0,
         boundaryRemovedLineTexts: [],
         boundaryDedupAbove: [],

@@ -5,7 +5,7 @@ import { servedForPath, withAnchorSession } from "./anchor-registry";
 import { resolveInCwd } from "./fs-write";
 import { abortIf, splitLines, isRec, normalizeFilePath } from "./utils";
 
-const HASH_ECHO_RE = new RegExp(`^(${HASH_CLASS})${HASH_SEP}`);
+const HASH_ECHO_RE = new RegExp(`^(?: *[0-9]+ ${HASH_SEP} )?[+ -]?(${HASH_CLASS})${HASH_SEP}`);
 
 function searchEcho(lines: string[], served: ReadonlyMap<string, string> | ReadonlySet<string>): { line: number; hash: string } | undefined {
   for (let i = 0; i < lines.length; i++) {
@@ -19,10 +19,6 @@ export function findServedHashEcho(content: string, served: ReadonlyMap<string, 
   return searchEcho(splitLines(content), served);
 }
 
-export function findEditHashEcho(lines: string[], served: ReadonlyMap<string, string> | ReadonlySet<string>): { line: number; hash: string } | undefined {
-  return searchEcho(lines, served);
-}
-
 export async function servedHashEchoDenial(rawPath: string, content: string, cwd: string, signal?: AbortSignal): Promise<string | undefined> {
   abortIf(signal);
   const { resolved } = await resolveInCwd(rawPath, cwd);
@@ -31,7 +27,7 @@ export async function servedHashEchoDenial(rawPath: string, content: string, cwd
   if (!served || served.size === 0) return undefined;
   const echo = findServedHashEcho(content, served);
   if (!echo) return undefined;
-  return `[E_WRITE_HASH_ECHO] Refused write to ${rawPath}: line ${echo.line} begins with the exact ${echo.hash}${HASH_SEP} anchor served for this file. Remove the copied anchors and retry.`;
+  return `[E_WRITE_HASH_ECHO] Refused write to ${rawPath}: line ${echo.line} contains the copied ${echo.hash}${HASH_SEP} anchor served for this file. Remove the copied anchors and retry.`;
 }
 
 export function registerWriteHook(pi: ExtensionAPI): void {

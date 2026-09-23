@@ -3,16 +3,7 @@ import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { batchMemberFor, finalizeTurn, planAssistantMessage, resetBatchStateForTests } from "../../src/batch";
 import { lineHashes } from "../../src/hashline";
-import { setupIntegrationTest, withTempFile } from "../support/fixtures";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
+import { setupIntegrationTest, withTempFile, toolCall, assistantMessage } from "../support/fixtures";
 describe("planAssistantMessage", () => {
   it("ignores non-assistant messages", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
@@ -109,7 +100,7 @@ describe("planAssistantMessage", () => {
     });
   });
 
-  it("poisons single-file batch on unresolvable sibling", async () => {
+  it("leaves a lone resolvable edit solo when its sibling anchor resolves nowhere", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       setupIntegrationTest(cwd);
       const hashes = await lineHashes("aaa\nbbb\nccc\n", path);
@@ -120,7 +111,7 @@ describe("planAssistantMessage", () => {
         ]),
         cwd,
       );
-      expect(batchMemberFor("c1")).toMatchObject({ display: 1, size: 1, last: true });
+      expect(batchMemberFor("c1")).toBeUndefined();
       expect(batchMemberFor("c2")).toBeUndefined();
     });
   });

@@ -5,25 +5,10 @@ import { mkdir, writeFile } from "fs/promises";
 import register from "../../index";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests, batchMemberFor } from "../../src/batch";
-import { writeConfig, readConfig } from "../../src/config";
 import { planEdit } from "../../src/hashline";
 import { resEdit } from "../../src/hashline";
 import { lineHashes } from "../../src/hashline";
-import { makeFakePiRegistry, withTempFile, getText } from "../support/fixtures";
-import { markBoundaryNoop, consumeBoundaryBypass, noopPayloadKey, clearBoundaryBypass } from "../../src/boundary-bypass";
-
-function toolCall(id: string, name: string, args: unknown) {
-  return { type: "toolCall", id, name, arguments: args };
-}
-
-function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
-  return { role: "assistant", content: calls };
-}
-
-function anchorFor(readText: string, needle: string) {
-  return readText.split("\n").find((line) => line.split("│")[1] === needle)!.split("│")[0]!;
-}
-
+import { makeFakePiRegistry, withTempFile, getText, toolCall, assistantMessage, anchorFor } from "../support/fixtures";
 async function setupTools(cwd: string) {
   resetRegistryForTests();
   resetBatchStateForTests();
@@ -220,112 +205,81 @@ describe("batch hardening", () => {
     });
   });
 
-  it("aborted batch preserves consumed bypass for retry", async () => {
-    await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
+  it("an unresolvable sibling does not abort the valid sibling batch", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);
       const readTool = getTool("read");
       const editTool = getTool("replace");
       const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const bRef = anchorFor(text, "b");
-      const cRef = anchorFor(text, "c");
-      const { resolveInCwd } = await import("../../src/fs-write");
-      const { resolved } = await resolveInCwd("sample.txt", cwd);
-      clearBoundaryBypass(resolved);
-      const payload = noopPayloadKey(resolved, bRef, bRef, ["X", "c"]);
-      markBoundaryNoop(resolved, payload);
+      const aaaRef = anchorFor(text, "aaa");
+      const bbbRef = anchorFor(text, "bbb");
+      const cccRef = anchorFor(text, "ccc");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("o1", "replace", { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "c"] }),
-        toolCall("o2", "replace", { remove_from: bRef, remove_to: cRef, replacement_lines: ["OVERLAP"] }),
+        toolCall("v1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
+        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
+        toolCall("v2", "replace", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }),
+        toolCall("v3", "replace", { remove_from: cccRef, remove_to: cccRef, replacement_lines: ["CCC"] }),
       ]) }, ctx) as Promise<unknown>);
-      await editTool.execute("o1", { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "c"] }, undefined, undefined, ctx);
+      expect(batchMemberFor("s1")).toBeUndefined();
+      expect(batchMemberFor("v1")?.display).toBe(1);
+      expect(batchMemberFor("v3")?.last).toBe(true);
+      const first = getText(await editTool.execute("v1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx));
+      expect(first).toBe("In batch 1");
       await expect(
-        editTool.execute("o2", { remove_from: bRef, remove_to: cRef, replacement_lines: ["OVERLAP"] }, undefined, undefined, ctx)
-      ).rejects.toThrow(/E_BATCH_OVERLAP|E_OP_ABORTED/);
-      expect(consumeBoundaryBypass(resolved, payload)).toBe(true);
-      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\n");
+        editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_STALE_ANCHOR\]/);
+      await editTool.execute("v2", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }, undefined, undefined, ctx);
+      const last = await editTool.execute("v3", { remove_from: cccRef, remove_to: cccRef, replacement_lines: ["CCC"] }, undefined, undefined, ctx);
+      expect(getText(last)).toContain("Batch 1: 3 edits applied as one commit");
+      expect(await readFile(path, "utf-8")).toBe("AAA\nBBB\nCCC\n");
     });
   });
-
-  it("pending bypass overrides strict dedup for one resend", async () => {
+  it("an unresolvable sibling executed first does not poison the later batch", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const before = await readConfig();
-      await writeConfig({ ...before, boundaryDedupMode: "strict" });
+      const { getTool, handlers, ctx } = await setupTools(cwd);
+      const readTool = getTool("read");
+      const editTool = getTool("replace");
+      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
+      const aaaRef = anchorFor(text, "aaa");
+      const bbbRef = anchorFor(text, "bbb");
+      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
+        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
+        toolCall("v1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
+        toolCall("v2", "replace", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }),
+      ]) }, ctx) as Promise<unknown>);
+      let failure = "";
       try {
-        const { ctx, readTool, editTool } = await (async () => {
-          const tools = await setupTools(cwd);
-          return { ctx: tools.ctx, readTool: tools.getTool("read"), editTool: tools.getTool("replace") };
-        })();
-        const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-        const bRef = anchorFor(text, "bbb");
-        const payload = { remove_from: bRef, remove_to: bRef, replacement_lines: ["X", "ccc"] };
-        await expect(
-          editTool.execute("e1", payload, undefined, undefined, ctx)
-        ).rejects.toThrow(/E_BOUNDARY_STRICT/);
-        expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
-        const { resolveInCwd } = await import("../../src/fs-write");
-        const { resolved } = await resolveInCwd("sample.txt", cwd);
-        markBoundaryNoop(resolved, noopPayloadKey(resolved, bRef, bRef, ["X", "ccc"]));
-        const applied = await editTool.execute("e2", payload, undefined, undefined, ctx);
-        expect(getText(applied)).toMatch(/W_BOUNDARY_BYPASS/);
-        expect(await readFile(path, "utf-8")).toBe("aaa\nX\nccc\nccc\n");
-      } finally {
-        await writeConfig(before);
+        await editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx);
+      } catch (error) {
+        failure = error instanceof Error ? error.message : String(error);
       }
+      expect(failure).toMatch(/^\[E_STALE_ANCHOR\]/);
+      expect(failure).not.toContain("Aborts batch");
+      const first = getText(await editTool.execute("v1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx));
+      expect(first).toBe("In batch 1");
+      const last = await editTool.execute("v2", { remove_from: bbbRef, remove_to: bbbRef, replacement_lines: ["BBB"] }, undefined, undefined, ctx);
+      expect(getText(last)).toContain("Batch 1: 2 edits applied as one commit");
+      expect(await readFile(path, "utf-8")).toBe("AAA\nBBB\nccc\n");
     });
   });
-  it("preserves bypass consumed by later member after earlier failure", async () => {
-    await withTempFile("sample.txt", "a\nb\nc\nd\n", async ({ cwd, path }) => {
+  it("an unparsable sibling fails solo instead of aborting the batch", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\n", async ({ cwd, path }) => {
       const { getTool, handlers, ctx } = await setupTools(cwd);
       const readTool = getTool("read");
       const editTool = getTool("replace");
       const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const bRef = anchorFor(text, "b");
-      const cRef = anchorFor(text, "c");
-      const { resolveInCwd } = await import("../../src/fs-write");
-      const { resolved } = await resolveInCwd("sample.txt", cwd);
-      clearBoundaryBypass(resolved);
+      const aaaRef = anchorFor(text, "aaa");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("m1", "replace", { remove_from: bRef, remove_to: "ZZZZ", replacement_lines: ["MIXED"] }),
-        toolCall("m2", "replace", { remove_from: cRef, remove_to: cRef, replacement_lines: ["Y"] }),
+        toolCall("p1", "replace", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }),
+        toolCall("p2", "replace", { replacement_lines: ["BBB"] }),
       ]) }, ctx) as Promise<unknown>);
-      const payload2 = noopPayloadKey(resolved, cRef, cRef, ["Y"]);
-      markBoundaryNoop(resolved, payload2);
-      await expect(editTool.execute("m1", { remove_from: bRef, remove_to: "ZZZZ", replacement_lines: ["MIXED"] }, undefined, undefined, ctx)).rejects.toThrow();
-      await expect(editTool.execute("m2", { remove_from: cRef, remove_to: cRef, replacement_lines: ["Y"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
-      expect(await readFile(path, "utf-8")).toBe("a\nb\nc\nd\n");
-      expect(consumeBoundaryBypass(resolved, payload2)).toBe(true);
-    });
-  });
-  it("unresolved same-turn stale aborts single-file batch valid first", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const { getTool, handlers, ctx } = await setupTools(cwd);
-      const readTool = getTool("read");
-      const editTool = getTool("replace");
-      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const valid = anchorFor(text, "aaa");
-      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
-        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
-      ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
-      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
-    });
-  });
-  it("unresolved same-turn stale aborts single-file batch stale first", async () => {
-    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd, path }) => {
-      const { getTool, handlers, ctx } = await setupTools(cwd);
-      const readTool = getTool("read");
-      const editTool = getTool("replace");
-      const text = getText(await readTool.execute("r1", { path: "sample.txt" }, undefined, undefined, ctx));
-      const valid = anchorFor(text, "aaa");
-      await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
-        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
-        toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
-      ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
-      expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");
+      expect(batchMemberFor("p1")).toBeUndefined();
+      expect(batchMemberFor("p2")).toBeUndefined();
+      await editTool.execute("p1", { remove_from: aaaRef, remove_to: aaaRef, replacement_lines: ["AAA"] }, undefined, undefined, ctx);
+      await expect(
+        editTool.execute("p2", { replacement_lines: ["BBB"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_BAD_SHAPE\]/);
+      expect(await readFile(path, "utf-8")).toBe("AAA\nbbb\n");
     });
   });
   it("aborted batch preserves prior undo", async () => {
@@ -341,11 +295,15 @@ describe("batch hardening", () => {
       const second = getText(await readTool.execute("r2", { path: "sample.txt" }, undefined, undefined, ctx));
       const valid = anchorFor(second, "aaa");
       await (handlers.get("message_end")!({ type: "message_end", message: assistantMessage([
+        toolCall("s1", "replace", { remove_from: valid, remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
         toolCall("v1", "replace", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }),
-        toolCall("s1", "replace", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }),
       ]) }, ctx) as Promise<unknown>);
-      await expect(editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)).rejects.toThrow(/E_OP_ABORTED/);
-      await expect(editTool.execute("s1", { remove_from: "ZZZZ", remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)).rejects.toThrow(/Aborts batch 1\.$/);
+      await expect(
+        editTool.execute("s1", { remove_from: valid, remove_to: "ZZZZ", replacement_lines: ["XXX"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/Aborts batch 1\.$/);
+      await expect(
+        editTool.execute("v1", { remove_from: valid, remove_to: valid, replacement_lines: ["AAA"] }, undefined, undefined, ctx)
+      ).rejects.toThrow(/\[E_OP_ABORTED\]/);
       expect(await readFile(path, "utf-8")).toBe("aaa\nBBB\nccc\n");
       await undoTool.execute("u1", { path: "sample.txt" }, undefined, undefined, ctx);
       expect(await readFile(path, "utf-8")).toBe("aaa\nbbb\nccc\n");

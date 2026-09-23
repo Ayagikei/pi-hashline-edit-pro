@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { constants } from "node:fs";
 import { execPipeline, type ReqParams, type ReplaceDetails, previewFromPipe, previewError } from "./replace";
 import { commitEdit } from "./commit";
-import { batchMemberFor, ensureBatchBase, executeBatchMember, noteBatchFailure, suffixPoisonCause } from "./batch";
+import { batchMemberFor, ensureBatchBase, executeBatchMember, noteBatchFailure } from "./batch";
 import { readNormFile, type NormFile } from "./file-reader";
 import { MAX_HASH_LINES, parseHashRef, resEdit, resolveAnchorLine, type Anchor, type HEdit } from "./hashline";
 import { stripAnchorRow } from "./hashline/resolve";
@@ -11,14 +11,13 @@ import { withAnchorSession } from "./anchor-registry";
 import { loadP, loadGuide } from "./prompts";
 import { assertInsertReq, normReq, type InsertReq } from "./payload-contract";
 import { decodeStringArray, isRec, splitLines } from "./utils";
-import { clearBoundaryBypass } from "./boundary-bypass";
 import { queuedEdit, editToolBase, editRenderCallWrapper, editRenderResultWrapper, resolveEditTargetWithRequirement, throwIfStrictInput, withInsertPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import type { RPreview, RRState } from "./replace-render";
 export { assertInsertReq, type InsertReq };
 
 const insertAnchorSchema = Type.String({
   description:
-    'Bare 4-char anchor from a read row (the text before the `│` separator), never the row content. A pasted diff row or `anchor│` prefix is stripped with a warning. The anchor line is preserved; lines go after or before it.',
+    'Bare 4-char anchor from a served anchor│content row (the text before the `│` separator), never the row content. A pasted diff row or `anchor│` prefix is stripped with a warning. The anchor line is preserved; lines go after or before it.',
 });
 
 const insertDirectionSchema = Type.Union(
@@ -189,7 +188,6 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
         }).catch((error: unknown) => {
           const member = batchMemberFor(_toolCallId);
           if (member) noteBatchFailure(member, error);
-          else suffixPoisonCause(_toolCallId, error);
           throw error;
         });
         let ref: Anchor;
@@ -218,6 +216,7 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
             }
             return executeBatchMember({
               kind: "insert",
+              direction: req.direction,
               member,
               targetPath,
               mutationTargetPath,
@@ -251,7 +250,6 @@ export function buildInsertToolDef(flags: EditToolFlags = DEFAULT_EDIT_FLAGS): I
             noopNoun: "Insertion",
             foldedAnchorLines: anchorLine === undefined ? 0 : 1,
             prefixWarnings: [...anchorWarnings, ...insertWarnings],
-            onApplied: () => clearBoundaryBypass(mutationTargetPath),
           });
         });
       });

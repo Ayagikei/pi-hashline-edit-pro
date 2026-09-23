@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { configDir, configPath, hashStorePath, hashStoreDir } from "../../src/paths";
+import { withHome } from "../support/fixtures";
 
 describe("configDir", () => {
   it("returns the config directory under home when XDG_CONFIG_HOME is unset", () => {
+    const restore = withHome(undefined);
     const previousXdg = process.env.XDG_CONFIG_HOME;
     delete process.env.XDG_CONFIG_HOME;
     try {
@@ -12,6 +14,7 @@ describe("configDir", () => {
     } finally {
       if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousXdg;
+      restore();
     }
   });
 
@@ -27,6 +30,7 @@ describe("configDir", () => {
   });
 
   it("ignores an empty XDG_CONFIG_HOME", () => {
+    const restore = withHome(undefined);
     const previousXdg = process.env.XDG_CONFIG_HOME;
     process.env.XDG_CONFIG_HOME = "";
     try {
@@ -34,6 +38,7 @@ describe("configDir", () => {
     } finally {
       if (previousXdg === undefined) delete process.env.XDG_CONFIG_HOME;
       else process.env.XDG_CONFIG_HOME = previousXdg;
+      restore();
     }
   });
 });

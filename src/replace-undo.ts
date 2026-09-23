@@ -1,19 +1,19 @@
 import { constants } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, stat } from "node:fs/promises";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { loadHashStore, persistSnapshot, upsertUndo, getUndoEntry, deleteUndo, type UndoRecord } from "./hash-store";
-import { servedHashesFromDiff, buildServedMap } from "./served";
-import { contentChecksum } from "./hashline/hasher";
-import { hashSource } from "./hashline";
-import { markServed as markServedScoped, freeAnchors, adoptAnchors, withAnchorSession } from "./anchor-registry";
+import { servedHashesFromDiff, serveRows } from "./served";
+import { lineChecksum } from "./hashline";
+import { freeAnchors, adoptAnchors, withAnchorSession } from "./anchor-registry";
 import { resolveInCwd, writeAtomic, type FileIdentity } from "./fs-write";
 import { toLF, stripBOM, restoreEndings, type LineEnding } from "./normalize";
 import { genDiff, genPatch, spansFromHashes } from "./replace-diff";
 import { getDiffContextLines } from "./config";
 import { cntDiff, errCode, makePrepareArguments, splitLines } from "./utils";
 import { loadP, loadGuide } from "./prompts";
+import { withUndoPrompts, DEFAULT_EDIT_FLAGS, type EditToolFlags } from "./edit-common";
 import { buildMetrics } from "./replace-response";
 import { renderEditResult, fmtCall } from "./replace-render";
 import { Text } from "@earendil-works/pi-tui";
@@ -24,6 +24,7 @@ export interface UndoEntry {
   originalEnding: LineEnding;
   hashes: string[];
   resultContent: string;
+  mode?: number;
 }
 
 export async function saveUndo(
@@ -34,12 +35,18 @@ export async function saveUndo(
   try {
     const store = await loadHashStore();
     previous = getUndoEntry(store, path);
+    let mode: number | undefined;
+    try {
+      mode = (await stat(path)).mode & 0o7777;
+    } catch {
+    }
     upsertUndo(store, path, {
       content: entry.content,
       bom: entry.bom,
       ending: entry.originalEnding,
       hashes: entry.hashes,
       resultContent: entry.resultContent,
+      ...(mode !== undefined ? { mode } : {}),
     });
   } catch (error) {
     console.error("Failed to persist undo entry:", error);
@@ -75,6 +82,7 @@ export async function getUndo(path: string): Promise<UndoEntry | undefined> {
       originalEnding,
       hashes: record.hashes,
       resultContent: record.resultContent,
+      ...(record.mode !== undefined ? { mode: record.mode } : {}),
     };
   } catch (error) {
     console.error("Failed to load undo entry:", error);
@@ -91,13 +99,22 @@ export async function clearUndo(path: string): Promise<void> {
   }
 }
 
-export function regUndo(pi: ExtensionAPI): void {
+function fallbackFileMode(): number {
+  return 0o666 & ~process.umask();
+}
+
+export function regUndo(pi: ExtensionAPI, flags: EditToolFlags = DEFAULT_EDIT_FLAGS): void {
+  const prompted = withUndoPrompts({
+    description: loadP("../prompts/undo-last-change.md"),
+    snippet: loadP("../prompts/undo-last-change-snippet.md"),
+    guidelines: loadGuide("../prompts/undo-last-change-guidelines.md"),
+  }, flags);
   pi.registerTool({
     name: "undo_last_change",
     label: "Undo Last Change",
-    description: loadP("../prompts/undo-last-change.md"),
-    promptSnippet: loadP("../prompts/undo-last-change-snippet.md"),
-    promptGuidelines: loadGuide("../prompts/undo-last-change-guidelines.md"),
+    description: prompted.description,
+    promptSnippet: prompted.snippet,
+    promptGuidelines: prompted.guidelines,
     prepareArguments: makePrepareArguments(),
     parameters: Type.Object({
       path: Type.String({
@@ -160,7 +177,7 @@ export function regUndo(pi: ExtensionAPI): void {
               content: [
                 {
                   type: "text",
-                  text: `[E_UNDO_STALE] Cannot undo last change on ${path}: the file was modified after the edit, so nothing was reverted. The current content already contains your applied edit plus that external change and is most likely the correct state. Do not modify the file to make an undo possible and do not revert your own edit. The undo record is kept. Call read() to verify the current state, then stop.`
+                  text: `[E_UNDO_STALE] Cannot undo last change on ${path}: the file was modified after the edit, so nothing was reverted and the file was left untouched. The undo record is kept. Do not edit the file to force the undo. Call read() to inspect the current state.`
                 },
               ],
               isError: true,
@@ -172,6 +189,7 @@ export function regUndo(pi: ExtensionAPI): void {
             mutationTargetPath,
             undo.bom + restoreEndings(undo.content, undo.originalEnding),
             currentIdentity,
+            undo.mode ?? fallbackFileMode(),
           );
 
           const currentNormalized = currentRaw === undefined ? "" : toLF(stripBOM(currentRaw).text);
@@ -187,16 +205,17 @@ export function regUndo(pi: ExtensionAPI): void {
           try {
             const store = await loadHashStore();
             const undoLines = splitLines(undo.content);
-            persistSnapshot(store, mutationTargetPath, undo.content, undo.hashes, undoLines.map((line) => contentChecksum(hashSource(line))));
+            persistSnapshot(store, mutationTargetPath, undo.content, undo.hashes, undoLines.map(lineChecksum));
             freeAnchors(mutationTargetPath);
             adoptAnchors(
               mutationTargetPath,
-              new Map(undoLines.map((line, i) => [undo.hashes[i]!, contentChecksum(hashSource(line))])),
+              new Map(undoLines.map((line, i) => [undo.hashes[i]!, lineChecksum(line)])),
             );
-            markServedScoped(
+            serveRows(
               mutationTargetPath,
-              buildServedMap(undo.hashes, undoLines, servedHashesFromDiff(undoDiff)),
-              new Set(undo.hashes),
+              undo.hashes,
+              undoLines,
+              servedHashesFromDiff(undoDiff),
             );
           } catch (error) {
             console.error("Failed to restore hash store snapshot after undo:", error);
@@ -229,7 +248,7 @@ export function regUndo(pi: ExtensionAPI): void {
             ],
             details: {
               diff: undoDiff,
-              diffLineNumbers: undoDiffResult.lineNumbers,
+              diffLineNumbers: undoDiffResult.lineNumbers.map((line) => line ?? null),
               patch: patchResult.patch,
               ...(patchResult.truncated ? { patchTruncated: true as const } : {}),
               metrics: buildMetrics({

@@ -2,18 +2,20 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { formatSize, DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, win32 } from "node:path";
+import { dirname, isAbsolute, join, win32 } from "node:path";
+import { pathToFileURL } from "node:url";
 import { spawn, spawnSync } from "node:child_process";
 import { createInterface } from "node:readline";
 import { tryReadNormFile } from "./file-reader";
-import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP } from "./hashline";
+import { globToRegex } from "./glob";
+import { MAX_HASH_LINES, fmtRow, HASH_LEN, HASH_SEP, HASH_CLASS } from "./hashline";
 import { ANCHOR_POOL_EXHAUSTED_PREFIX, MAX_GREP_LINE_BYTES } from "./constants";
-import { toCwd } from "./paths";
+import { toCwd, toDisplayPath } from "./paths";
 import { loadP, loadGuide } from "./prompts";
 import { normReq } from "./payload-contract";
-import { abortIf, errCode, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
-import { markServed as markServedScoped, withAnchorSession } from "./anchor-registry";
-import { buildServedMap } from "./served";
+import { abortIf, errCode, gutterWidth, isRec, makePrepareArguments, rejectUnknownFields, truncateToBytes, visLines } from "./utils";
+import { withAnchorSession } from "./anchor-registry";
+import { serveRows } from "./served";
 import { Text } from "@earendil-works/pi-tui";
 import { expandHint, getResultText, reuseText, type CallT, type FgT } from "./replace-render";
 const GREP_KS = new Set(["pattern", "path", "glob", "context", "ignoreCase", "literal", "limit"]);
@@ -152,34 +154,6 @@ function assertSafeRegex(pattern: string): void {
   }
 }
 
-function globToRegex(glob: string): RegExp {
-  if (glob.startsWith("/")) glob = glob.slice(1);
-  let source = "";
-  let i = 0;
-  while (i < glob.length) {
-    const ch = glob[i]!;
-    if (ch === "*") {
-      if (glob[i + 1] === "*") {
-        i += 2;
-        if (glob[i] === "/") {
-          i += 1;
-          source += "(?:.*\\/)?";
-        } else {
-          source += ".*";
-        }
-        continue;
-      }
-      source += ".*";
-    } else if (ch === "?") {
-      source += "[^/]";
-    } else {
-      source += ch.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-    }
-    i += 1;
-  }
-  return new RegExp(`^${source}$`);
-}
-
 interface FileHit {
   path: string;
   displayPath: string;
@@ -281,11 +255,8 @@ function makeHitFromIndices(
 }
 
 let cachedRgPath: string | undefined;
-export function clearRgPathCache(): void {
-  cachedRgPath = undefined;
-}
 
-async function resolveRgPath(): Promise<string> {
+export async function resolveRgPath(): Promise<string> {
   if (cachedRgPath !== undefined) return cachedRgPath;
   try {
     const r = spawnSync("rg", ["--version"], { stdio: "pipe" });
@@ -306,10 +277,9 @@ async function resolveRgPath(): Promise<string> {
     const { createRequire } = await import("node:module");
     const require = createRequire(import.meta.url);
     const pkgPath = require.resolve("@earendil-works/pi-coding-agent/package.json");
-    const { dirname } = await import("node:path");
     const piDir = dirname(pkgPath);
     const toolsManagerPath = join(piDir, "dist/utils/tools-manager.js");
-    const mod = await import("file://" + toolsManagerPath);
+    const mod = await import(pathToFileURL(toolsManagerPath).href);
     if (mod.ensureTool) {
       const p = await mod.ensureTool("rg", true);
       if (p) { cachedRgPath = p; return p; }
@@ -404,14 +374,11 @@ async function collectRgMatches(
   });
 }
 
-function gutterWidthFor(numbers: number[]): number {
-  let max = 0;
-  for (const n of numbers) if (n > max) max = n;
-  return String(max || 1).length;
-}
 
 function displayRowsForHit(hit: FileHit): string[] {
-  const width = gutterWidthFor(hit.lineNumbers);
+  let max = 0;
+  for (const n of hit.lineNumbers) if (n > max) max = n;
+  const width = gutterWidth(max, 1);
   return hit.rows.map((row, i) => {
     const n = hit.lineNumbers[i]!;
     const padded = String(n).padStart(width, " ");
@@ -501,7 +468,7 @@ function highlightMatches(text: string, regex: RegExp, theme: FgT): string {
   return out + text.slice(last);
 }
 
-const ANCHORED_ROW_RE = /^[A-Za-z0-9]{4}│/;
+const ANCHORED_ROW_RE = new RegExp(`^${HASH_CLASS}${HASH_SEP}`);
 
 function highlightHitRow(row: string, highlight: RegExp, theme: FgT): string {
   const anchored = row.match(ANCHORED_ROW_RE);
@@ -572,6 +539,12 @@ export function regGrep(pi: ExtensionAPI): void {
         }
         const globRoot = baseStat.isFile() ? dirname(base) : base;
         const globRegex = req.glob === undefined ? undefined : globToRegex(req.glob);
+        const matchesGlob = (absPath: string): boolean => {
+          if (globRegex === undefined) return true;
+          const displayPath = toDisplayPath(ctx.cwd, absPath);
+          const globPath = toDisplayPath(globRoot, absPath);
+          return globRegex.test(globPath) || globRegex.test(displayPath);
+        };
         const validatedRegex = buildRegex(req.pattern, req.literal === true, req.ignoreCase === true);
         const rgPath = await resolveRgPath();
         const hits: FileHit[] = [];
@@ -607,14 +580,10 @@ export function regGrep(pi: ExtensionAPI): void {
           const sortedNums = [...allNums].sort((a, b) => a - b);
           const indices = sortedNums.map((n) => n - 1).filter((n) => n >= 0);
           if (countOnly) {
-            if (globRegex) {
-              const displayPath = relative(ctx.cwd, absPath).replace(/\\/g, "/");
-              const globPath = relative(globRoot, absPath).replace(/\\/g, "/");
-              if (!globRegex.test(globPath) && !globRegex.test(displayPath)) continue;
-            }
+            if (!matchesGlob(absPath)) continue;
             const norm = await readGrepFileShadow(absPath);
             if (!norm) continue;
-            const hit = makeHitFromIndices(norm, relative(ctx.cwd, absPath).replace(/\\/g, "/"), indices, context, validatedRegex, totalForFile, indices.length);
+            const hit = makeHitFromIndices(norm, toDisplayPath(ctx.cwd, absPath), indices, context, validatedRegex, totalForFile, indices.length);
             const display = displayRowsForHit(hit);
             totalRows += display.length;
             for (const r of display) totalBytes += Buffer.byteLength(r, "utf-8") + 1;
@@ -633,15 +602,10 @@ export function regGrep(pi: ExtensionAPI): void {
             limitTruncated = true;
             break;
           }
-          if (globRegex) {
-            const displayPath = relative(ctx.cwd, absPath).replace(/\\/g, "/");
-            const globPath = relative(globRoot, absPath).replace(/\\/g, "/");
-            if (!globRegex.test(globPath) && !globRegex.test(displayPath)) continue;
-          }
+          if (!matchesGlob(absPath)) continue;
           const norm = await readGrepFile(absPath);
           if (!norm) continue;
-          const hit = makeHitFromIndices(norm, relative(ctx.cwd, absPath).replace(/\\/g, "/"), indices, context, validatedRegex, totalForFile, Math.min(totalForFile, remaining));
-          if (!hit) continue;
+          const hit = makeHitFromIndices(norm, toDisplayPath(ctx.cwd, absPath), indices, context, validatedRegex, totalForFile, Math.min(totalForFile, remaining));
           const display = displayRowsForHit(hit);
           const keptRows: string[] = [];
           const keptHashes: string[] = [];
@@ -677,7 +641,7 @@ export function regGrep(pi: ExtensionAPI): void {
         }
         hits.sort((a, b) => cmp(a.displayPath, b.displayPath));
         for (const hit of hits) {
-          markServedScoped(hit.path, buildServedMap(hit.fileHashes, hit.fileLines, hit.hashes), new Set(hit.fileHashes));
+          serveRows(hit.path, hit.fileHashes, hit.fileLines, hit.hashes);
         }
         const blocks = hits
           .map((hit) => `=== ${hit.displayPath} ===\n${hit.rows.join("\n")}`)

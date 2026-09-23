@@ -1,6 +1,7 @@
 import { Markdown, Text } from "@earendil-works/pi-tui";
 import { keyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import type { ReplaceDetails } from "./replace";
+import { abortedBatchMessageFor } from "./batch";
 import { withLineNumbers } from "./utils";
 import { isDedupRow } from "./replace-response";
 import { getPreviewInput } from "./payload-contract";
@@ -41,7 +42,7 @@ export function colorLines(lines: string[], theme: FgT): string[] {
 		return theme.fg("dim", line);
 	});
 }
-export function toNumberedDiff(diff: string, lineNumbers: (number|undefined)[]): string {
+export function toNumberedDiff(diff: string, lineNumbers: (number | null | undefined)[]): string {
 	return withLineNumbers(diff, lineNumbers);
 }
 
@@ -64,6 +65,21 @@ export function fmtPreview(
 
 export function fmtResult(diff: string, theme: FgT): string {
 	return colorLines(diff.split("\n"), theme).join("\n");
+}
+
+export function highlightBatchRefs(text: string, theme: FgT): string {
+	const pattern = /\b([Bb]atch \d+)\b/g;
+	const sections: string[] = [];
+	let cursor = 0;
+	for (;;) {
+		const match = pattern.exec(text);
+		if (!match) break;
+		if (match.index > cursor) sections.push(theme.fg("error", text.slice(cursor, match.index)));
+		sections.push(theme.fg("warning", match[0]));
+		cursor = match.index + match[0].length;
+	}
+	if (cursor < text.length) sections.push(theme.fg("error", text.slice(cursor)));
+	return sections.join("");
 }
 
 export function fmtCall(
@@ -144,6 +160,14 @@ function extractSummary(text: string | undefined): string | undefined {
 	return summary.length > 0 ? summary : undefined;
 }
 
+const BATCH_HEADER_RE = /^batch \d+:\n/;
+
+function splitBatchHeader(diff: string, lineNumbers: (number | null | undefined)[] | undefined): { header: string | undefined; body: string; lineNumbers: (number | null | undefined)[] | undefined } {
+	const match = diff.match(BATCH_HEADER_RE);
+	if (!match) return { header: undefined, body: diff, lineNumbers };
+	return { header: match[0]!.slice(0, -1), body: diff.slice(match[0].length), lineNumbers: lineNumbers?.slice(1) };
+}
+
 export function buildAppliedText(
 	text: string | undefined,
 	details: ReplaceDetails | undefined,
@@ -154,8 +178,9 @@ export function buildAppliedText(
 	const summary = extractSummary(text);
 	if (summary) sections.push(summary);
 	if (details?.diff) {
-		const rawDiff = details.diffLineNumbers ? toNumberedDiff(details.diff, details.diffLineNumbers) : details.diff;
-		const diffLines = details.diff.split("\n");
+		const { header, body, lineNumbers } = splitBatchHeader(details.diff, details.diffLineNumbers);
+		const rawDiff = lineNumbers ? toNumberedDiff(body, lineNumbers) : body;
+		const diffLines = body.split("\n");
 		const diffSection = expanded
 			? fmtResult(rawDiff, theme)
 			: fmtPreview(rawDiff, false, theme);
@@ -163,7 +188,7 @@ export function buildAppliedText(
 			!expanded && diffLines.length > RESULT_PREVIEW_LINES
 				? ` (${expandHint()})`
 				: "";
-		sections.push(`${diffSection}${hint}`);
+		sections.push(header !== undefined ? `${theme.fg("warning", header)}\n${diffSection}${hint}` : `${diffSection}${hint}`);
 	}
 	const warnings = details?.warnings?.length ? `Warnings:\n${details.warnings.join("\n")}` : extractWarnings(text);
 	if (warnings) sections.push(warnings);
@@ -343,9 +368,17 @@ export function renderEditResult(
 		renderState.preview = undefined;
 		renderState.previewGeneration = (renderState.previewGeneration ?? 0) + 1;
 	}
+	const batch = result.details?.batch;
+	if (batch && batch.last === false) {
+		const abortedMessage = typeof context?.toolCallId === "string" ? abortedBatchMessageFor(context.toolCallId) : undefined;
+		if (abortedMessage !== undefined) {
+			return reuseText(context, `\n${highlightBatchRefs(abortedMessage, theme)}`);
+		}
+		return reuseText(context, theme.fg("warning", `In batch ${batch.id}`));
+	}
 	if (context.isError) {
 		return renderedText
-			? reuseText(context, `\n${theme.fg("error", renderedText)}`)
+			? reuseText(context, `\n${highlightBatchRefs(renderedText, theme)}`)
 			: new Text("", 0, 0);
 	}
 	if (isApplied(result.details)) {

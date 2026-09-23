@@ -3,7 +3,7 @@ import { readFile, writeFile } from "fs/promises";
 import { join } from "path";
 import register from "../../index";
 import { initRegistry } from "../../src/anchor-registry";
-import { makeFakePiRegistry, withTempDir, getText } from "../support/fixtures";
+import { makeFakePiRegistry, withTempDir, getText, anchorFor } from "../support/fixtures";
 
 function sessionContext(cwd: string, sessionFile: string) {
   return {
@@ -15,11 +15,6 @@ function sessionContext(cwd: string, sessionFile: string) {
     },
   } as any;
 }
-
-function anchorFor(readText: string, needle: string): string {
-  return readText.split("\n").find((line) => line.includes(`│${needle}`))!.split("│")[0]!;
-}
-
 async function setup(dir: string) {
   await writeFile(join(dir, "fileA.txt"), "alpha\nbeta\ngamma\n");
   await writeFile(join(dir, "fileB.txt"), "one\ntwo\nthree\n");

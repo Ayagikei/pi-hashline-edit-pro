@@ -1,4 +1,5 @@
-import { NUL_CONTENT_MSG } from "./constants";
+import { NUL_CONTENT_MSG, MAX_BYTES } from "./constants";
+import { HASH_CLASS } from "./hashline/alphabet";
 
 export function isRec(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -23,16 +24,27 @@ export function normalizeAnchors(record: Record<string, unknown>): void {
     record.remove_to = record.replace_to;
     delete record.replace_to;
   }
+  if (typeof record.remove_from !== "string" && typeof record.from === "string") {
+    record.remove_from = record.from;
+    delete record.from;
+  }
+  if (typeof record.remove_to !== "string" && typeof record.to === "string") {
+    record.remove_to = record.to;
+    delete record.to;
+  }
+}
+
+export function normalizeRequest(input: unknown): unknown {
+  if (!isRec(input)) return input;
+  const record: Record<string, unknown> = { ...input };
+  normalizeFilePath(record);
+  normalizeAnchors(record);
+  normalizeEditLines(record);
+  return record;
 }
 
 export function makePrepareArguments(): (args: unknown) => any {
-  return (args) => {
-    if (!isRec(args)) return args;
-    const record = { ...args };
-    normalizeFilePath(record);
-    normalizeAnchors(record);
-    return record;
-  };
+  return normalizeRequest;
 }
 
 export function splitLines(text: string): string[] {
@@ -134,11 +146,13 @@ export function getCached<K, V>(map: Map<K, V>, key: K, compute: (key: K) => V):
 	return v;
 }
 
+const HASH_ROW_RE = new RegExp(`^${HASH_CLASS}│`);
+
 export function isHashRow(line: string): boolean {
-	return /^[A-Za-z0-9]{4}│/.test(line);
+	return HASH_ROW_RE.test(line);
 }
 
-function gutterWidth(max: number, fallback: number): number {
+export function gutterWidth(max: number, fallback: number): number {
 	return String(max || fallback).length;
 }
 
@@ -163,14 +177,14 @@ export function numberedRead(text: string, offset: number): string {
 	}).join("\n");
 }
 
-export function withLineNumbers(text: string, numbers: (number|undefined)[]): string {
+export function withLineNumbers(text: string, numbers: (number | null | undefined)[]): string {
 	const lines = text.split("\n");
 	const nums = numbers ?? [];
-	const max = nums.reduce<number>((m, n) => n !== undefined && n > m ? n : m, 0);
+	const max = nums.reduce<number>((m, n) => n !== undefined && n !== null && n > m ? n : m, 0);
 	const width = gutterWidth(max, lines.length);
 	return lines.map((line, i) => {
 		const n = nums[i];
-		const prefix = n !== undefined ? formatGutter(n, width) : blankGutter(width);
+		const prefix = n !== undefined && n !== null ? formatGutter(n, width) : blankGutter(width);
 		return prefix + line;
 	}).join("\n");
 }
@@ -181,6 +195,11 @@ export function clipLine(line: string, maxLen = 200): string {
 export function assertLineLimit(content: string, displayPath: string, limit: number): void {
 	const count = splitLines(content).length;
 	if (count > limit) throw new Error(formatLineLimit(displayPath, limit, count));
+}
+export function assertByteLimit(content: string, displayPath: string, limit = MAX_BYTES): void {
+	if (Buffer.byteLength(content, "utf-8") > limit) {
+		throw new Error(`[E_FILE_TOO_LARGE] File is too large: ${displayPath} (exceeds the ${limit / (1024 * 1024)}MB size limit). For very large files, use write.`);
+	}
 }
 export function lineLimitMoreThanMessage(displayPath: string, limit: number): string {
 	return formatLineLimit(displayPath, limit, undefined);
@@ -194,6 +213,47 @@ function stripCodeFence(text: string): string {
 	const trimmed = text.trim();
 	const fenced = /^```[^\n]*\n([\s\S]*?)\n?```$/.exec(trimmed);
 	return fenced ? fenced[1]!.trim() : trimmed;
+}
+
+function arrayLiteralEnd(text: string): number {
+	let depth = 0;
+	let quote: string | undefined;
+	let escaped = false;
+	for (let index = 0; index < text.length; index++) {
+		const char = text[index]!;
+		if (escaped) {
+			escaped = false;
+			continue;
+		}
+		if (char === "\\") {
+			escaped = true;
+			continue;
+		}
+		if (quote !== undefined) {
+			if (char === quote) quote = undefined;
+			continue;
+		}
+		if (char === '"' || char === "'") {
+			quote = char;
+			continue;
+		}
+		if (char === "[") depth += 1;
+		else if (char === "]") {
+			depth -= 1;
+			if (depth === 0) return index + 1;
+		}
+	}
+	return -1;
+}
+
+function stripTrailingMemberCall(text: string): string {
+	if (!text.startsWith("[")) return text;
+	const end = arrayLiteralEnd(text);
+	if (end < 0) return text;
+	const rest = text.slice(end);
+	if (rest.trim().length === 0) return text;
+	if (!rest.trimStart().startsWith(".") || !rest.trimEnd().endsWith(")")) return text;
+	return text.slice(0, end);
 }
 
 function jsonStringArray(text: string): string[] | undefined {
@@ -273,7 +333,7 @@ function scanArrayText(inner: string): string[] | undefined {
 
 function decodeArrayText(value: unknown): string[] | undefined {
 	if (typeof value !== "string") return undefined;
-	const trimmed = stripCodeFence(value);
+	const trimmed = stripTrailingMemberCall(stripCodeFence(value));
 	if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return undefined;
 	const decoded = jsonStringArray(trimmed);
 	if (decoded !== undefined && decoded.length > 0) return decoded;
@@ -283,8 +343,8 @@ function decodeArrayText(value: unknown): string[] | undefined {
 
 function looksLikeStringArray(value: unknown): boolean {
 	if (typeof value !== "string") return false;
-	const trimmed = stripCodeFence(value);
-	return trimmed.endsWith("]") && /^\[\s*['"]/.test(trimmed);
+	const trimmed = stripTrailingMemberCall(stripCodeFence(value));
+	return /^\[\s*['"]/.test(trimmed) && !trimmed.endsWith("].");
 }
 
 export function decodeStringArray(value: unknown, warnings?: string[], label = "replacement_lines"): string[] | undefined {
@@ -296,11 +356,35 @@ export function decodeStringArray(value: unknown, warnings?: string[], label = "
 	if (candidate === undefined) return undefined;
 	const decoded = decodeArrayText(candidate);
 	if (decoded !== undefined) {
-		warnings?.push(`[W_BAD_SHAPE] Unwrapped JSON array syntax from a ${label} element.`);
 		return decoded;
 	}
 	if (looksLikeStringArray(candidate)) {
 		warnings?.push(`[W_BAD_SHAPE] ${label} looked like a JSON array but could not be parsed; kept as one literal line: ${clipLine(candidate, 60)}`);
 	}
 	return undefined;
+}
+
+function splitEditLines(text: string): string[] {
+	return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+}
+
+function normalizeLineFieldValue(value: unknown): string[] | undefined {
+	const candidate = typeof value === "string"
+		? value
+		: Array.isArray(value) && value.length === 1 && typeof value[0] === "string"
+			? value[0]
+			: undefined;
+	if (candidate === undefined) return undefined;
+	const decoded = decodeStringArray(candidate);
+	if (decoded !== undefined) return decoded;
+	if (/^\[\s*\]$/.test(stripTrailingMemberCall(stripCodeFence(candidate)))) return [];
+	return splitEditLines(candidate);
+}
+
+function normalizeEditLines(record: Record<string, unknown>): void {
+	for (const key of ["replacement_lines", "lines"]) {
+		if (!(key in record)) continue;
+		const lines = normalizeLineFieldValue(record[key]);
+		if (lines !== undefined) record[key] = lines;
+	}
 }

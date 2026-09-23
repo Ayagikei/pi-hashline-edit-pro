@@ -4,13 +4,18 @@ import { beforeAll, afterAll, afterEach, vi } from "vitest";
 import { initHasher } from "../../src/hashline";
 import { Compile } from "typebox/compile";
 import register from "../../index";
-import { shutdownHashStore } from "../../src/hash-store";
+import { loadHashStore, shutdownHashStore } from "../../src/hash-store";
 import { initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { resetBatchStateForTests } from "../../src/batch";
+import { clearAllAutoReadAllComplete } from "../../src/auto-read-all-state";
 import { errCode } from "../../src/utils";
+const envRestores: Array<() => void> = [];
+
 afterEach(() => {
+  while (envRestores.length > 0) envRestores.pop()!();
   resetRegistryForTests();
   resetBatchStateForTests();
+  clearAllAutoReadAllComplete();
 });
 
 export async function getWritableTempRoot(): Promise<string> {
@@ -18,18 +23,21 @@ export async function getWritableTempRoot(): Promise<string> {
   await mkdir(fallback, { recursive: true });
   return fallback;
 }
-async function rmRetry(target: string): Promise<void> {
-  for (let attempt = 0; attempt < 5; attempt++) {
+export async function closeHashStore(): Promise<void> {
+  await loadHashStore().catch(() => undefined);
+  shutdownHashStore();
+}
+export async function rmRetry(target: string): Promise<void> {
+  for (let attempt = 0; attempt < 10; attempt++) {
     try {
       await rm(target, { recursive: true, force: true });
       return;
     } catch (error) {
-      if (errCode(error) === "EBUSY" && attempt < 4) {
-        shutdownHashStore();
-        await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
-        continue;
-      }
-      throw error;
+      const code = errCode(error);
+      if (code !== "EBUSY" && code !== "EPERM" && code !== "ENOTEMPTY") throw error;
+      shutdownHashStore();
+      if (attempt === 9) throw error;
+      await new Promise(r => setTimeout(r, 100 * (attempt + 1)));
     }
   }
 }
@@ -47,7 +55,7 @@ export async function setupTestHome(): Promise<{
     home: tmpHome,
     testPath,
     cleanup: async () => {
-      shutdownHashStore();
+      await closeHashStore();
       vi.unstubAllEnvs();
       await rmRetry(tmpHome);
     },
@@ -94,7 +102,7 @@ export async function withTempFile(
     await writeFile(path, content, "utf-8");
     await run({ cwd, path });
   } finally {
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -110,7 +118,7 @@ export async function withTempBytes(
     await writeFile(path, bytes);
     await run({ cwd, path });
   } finally {
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -125,7 +133,7 @@ export async function withTempSubdir(
     await mkdir(path, { recursive: true });
     await run({ cwd, path });
   } finally {
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(cwd);
     restoreHome();
   }
@@ -139,19 +147,19 @@ export async function withTempDir(
   try {
     await run(dir);
   } finally {
-    shutdownHashStore();
+    await closeHashStore();
     await rmRetry(dir);
     restoreHome();
   }
 }
 export async function makeTempDir(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(await getWritableTempRoot(), prefix));
-  process.env.HOME = dir;
-  process.env.XDG_CONFIG_HOME = "";
+  envRestores.push(withHome(dir));
   return dir;
 }
 export function makeFakePiRegistry() {
   const tools = new Map<string, any>();
+  let activeTools: string[] = [];
   const handlers = new Map<string, (...args: unknown[]) => unknown>();
   return {
     pi: {
@@ -180,6 +188,10 @@ export function makeFakePiRegistry() {
         tools.set(tool.name, tool);
       },
       registerCommand() {},
+      getActiveTools: () => activeTools,
+      setActiveTools(next: string[]) {
+        activeTools = next;
+      },
       on(event: string, handler: (...args: unknown[]) => unknown) {
         handlers.set(event, handler);
       },
@@ -196,10 +208,10 @@ export function setupIntegrationTest(cwd: string) {
   resetRegistryForTests();
   resetBatchStateForTests();
   initRegistry(undefined);
-  const { pi, getTool } = makeFakePiRegistry();
+  const { pi, handlers, getTool } = makeFakePiRegistry();
   register(pi);
   const ctx = { cwd, ui: { notify() {} } } as any;
-  return { pi, getTool, ctx, readTool: getTool("read"), editTool: getTool("replace") };
+  return { pi, handlers, getTool, ctx, readTool: getTool("read"), editTool: getTool("replace") };
 }
 export function setupReadTest(cwd: string) {
   const { pi, getTool } = makeFakePiRegistry();
@@ -210,8 +222,49 @@ export function getText(result: { content: Array<{ text?: string }> }): string {
   return result.content[0]?.text ?? "";
 }
 export function extractHash(line: string): string {
-  const m = line.match(/([A-Za-z0-9]{4})│/);
-  return m ? m[1]! : line.split("│")[0]!
+  const m = line.match(/([A-Za-z]{4})│/);
+  return m ? m[1]! : line.split("│")[0]!;
+}
+
+export function anchorFor(text: string, needle: string): string {
+  return extractHash(text.split("\n").find((line) => line.includes(`│${needle}`))!);
+}
+
+export function toolCall(id: string, name: string, args: unknown) {
+  return { type: "toolCall", id, name, arguments: args };
+}
+
+export function assistantMessage(calls: Array<{ type: string; id: string; name: string; arguments: unknown }>) {
+  return { role: "assistant", content: calls };
+}
+
+export function makePiStub(initialTools: string[] = []) {
+  const handlers = new Map<string, (event: any, ctx: any) => any>();
+  const commands = new Map<string, { description: string; handler: (...args: any[]) => any }>();
+  const tools = new Map<string, any>();
+  const notify = vi.fn();
+  let active = [...initialTools];
+  const pi = {
+    registerTool(tool: any) {
+      tools.set(tool.name, tool);
+    },
+    registerCommand(name: string, def: { description: string; handler: (...args: any[]) => any }) {
+      commands.set(name, def);
+    },
+    on(event: string, handler: (event: any, ctx: any) => any) {
+      handlers.set(event, handler);
+    },
+    getActiveTools: () => [...active],
+    setActiveTools(names: string[]) {
+      active = [...names];
+    },
+  } as any;
+  const getTool = (name: string) => {
+    const tool = tools.get(name);
+    if (!tool) throw new Error(`Tool not registered: ${name}`);
+    return tool;
+  };
+  return { pi, handlers, commands, tools, notify, getTool, getActive: () => [...active] };
 }
 export function expectedEditContent(
   lines: string[],

@@ -10,6 +10,7 @@ import {
   makePrepareArguments,
   truncateToBytes,
   decodeStringArray,
+  assertByteLimit,
 } from "../../src/utils";
 
 describe("isRec", () => {
@@ -311,6 +312,18 @@ describe("makePrepareArguments", () => {
     const result = prepare({ path: "a.txt", file_path: "b.txt" });
     expect(result).toEqual({ path: "a.txt", file_path: "b.txt" });
   });
+
+  it("normalizes from and to to remove_from and remove_to", () => {
+    const prepare = makePrepareArguments();
+    const result = prepare({ from: "a", to: "b" });
+    expect(result).toEqual({ remove_from: "a", remove_to: "b" });
+  });
+
+  it("normalizes from and to only when the remove field is missing", () => {
+    const prepare = makePrepareArguments();
+    const result = prepare({ remove_from: "a", from: "b", to: "c" });
+    expect(result).toEqual({ remove_from: "a", from: "b", remove_to: "c" });
+  });
 });
 
 describe("truncateToBytes", () => {
@@ -391,16 +404,16 @@ describe("decodeStringArray leniency", () => {
     expect(decodeStringArray('```\n["alpha"]\n```')).toEqual(["alpha"]);
   });
 
-  it("warns when it unwraps array syntax", () => {
+  it("unwraps array syntax", () => {
     const warnings: string[] = [];
     expect(decodeStringArray(['["alpha"]'], warnings)).toEqual(["alpha"]);
-    expect(warnings).toEqual(["[W_BAD_SHAPE] Unwrapped JSON array syntax from a replacement_lines element."]);
+    expect(warnings).toEqual([]);
   });
 
   it("uses the provided label in warnings", () => {
     const warnings: string[] = [];
-    decodeStringArray("['alpha']", warnings, "lines");
-    expect(warnings[0]).toContain("from a lines element");
+    decodeStringArray('["alpha", 7]', warnings, "lines");
+    expect(warnings[0]).toContain("lines looked like a JSON array");
   });
 
   it("warns instead of silently keeping unparseable string-array text", () => {
@@ -438,6 +451,28 @@ describe("decodeStringArray leniency", () => {
     expect(decodeStringArray("[,]")).toBeUndefined();
     expect(decodeStringArray('["a", ,]')).toBeUndefined();
   });
+
+  it("unwraps a stringified array followed by a JS method call", () => {
+    expect(decodeStringArray('["alpha", "beta"].map(s => s)')).toEqual(["alpha", "beta"]);
+    expect(decodeStringArray('["alpha", "beta"].slice(0, 1)')).toEqual(["alpha", "beta"]);
+    expect(decodeStringArray(['["alpha"].map(s => s)'])).toEqual(["alpha"]);
+    expect(decodeStringArray('["alpha", "beta",].map(s => s)')).toEqual(["alpha", "beta"]);
+  });
+
+  it("warns for a malformed stringified array of strings", () => {
+    const warnings: string[] = [];
+    expect(decodeStringArray('["alpha", 7].map(s => s)', warnings)).toBeUndefined();
+    expect(decodeStringArray('["alpha", 7', warnings)).toBeUndefined();
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain("looked like a JSON array");
+    expect(warnings[1]).toContain("looked like a JSON array");
+  });
+
+  it("does not warn for an envelope line that parseText unwraps", () => {
+    const warnings: string[] = [];
+    expect(decodeStringArray('["  "version": "2.8.4","].', warnings)).toBeUndefined();
+    expect(warnings).toHaveLength(0);
+  });
 });
 
 describe("decodeStringArray control bytes", () => {
@@ -454,5 +489,22 @@ describe("decodeStringArray control bytes", () => {
     expect(decodeStringArray('["a' + cr + 'b"]')).toEqual(["a" + cr + "b"]);
     expect(decodeStringArray('["a' + nul + 'b"]')).toEqual(["a" + nul + "b"]);
     expect(decodeStringArray('["a' + backslash + 'qb"]')).toBeUndefined();
+  });
+});
+
+describe("assertByteLimit", () => {
+  it("allows content at the limit and rejects content over it", () => {
+    expect(() => assertByteLimit("abc", "f.txt", 3)).not.toThrow();
+    expect(() => assertByteLimit("abcd", "f.txt", 3)).toThrow(/^\[E_FILE_TOO_LARGE\] File is too large: f\.txt/);
+  });
+
+  it("measures UTF-8 bytes rather than characters", () => {
+    expect(() => assertByteLimit("é", "f.txt", 2)).not.toThrow();
+    expect(() => assertByteLimit("é", "f.txt", 1)).toThrow(/E_FILE_TOO_LARGE/);
+  });
+
+  it("reports the exceeded limit in megabytes", () => {
+    const oneMb = 1024 * 1024;
+    expect(() => assertByteLimit("a".repeat(oneMb + 1), "f.txt", oneMb)).toThrow(/exceeds the 1MB size limit/);
   });
 });

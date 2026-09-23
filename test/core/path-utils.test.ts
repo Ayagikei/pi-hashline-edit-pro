@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as os from "os";
 import { resolve } from "path";
 import { toCwd } from "../../src/paths";
+import { withHome } from "../support/fixtures";
 
 describe("toCwd", () => {
   const cwd = "/home/user/project";
@@ -17,15 +18,23 @@ describe("toCwd", () => {
   });
 
   it("expands ~ to home directory", () => {
-    expect(toCwd("~/file.txt", cwd)).toBe(
-      os.homedir() + "/file.txt",
-    );
+    const restore = withHome(undefined);
+    try {
+      expect(toCwd("~/file.txt", cwd)).toBe(
+        os.homedir() + "/file.txt",
+      );
+    } finally {
+      restore();
+    }
   });
-
   it("expands bare ~ to home directory", () => {
-    expect(toCwd("~", cwd)).toBe(os.homedir());
+    const restore = withHome(undefined);
+    try {
+      expect(toCwd("~", cwd)).toBe(os.homedir());
+    } finally {
+      restore();
+    }
   });
-
   it("preserves a leading @ in relative paths", () => {
     expect(toCwd("@src/main.ts", cwd)).toBe(
       resolve(cwd, "@src/main.ts"),
