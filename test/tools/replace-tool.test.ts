@@ -69,6 +69,53 @@ describe("regReplace", () => {
     });
   });
 
+  it("ignores a numeric path sentinel from grok (path: -1)", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        {
+          remove_from: hashes[1]!, remove_to: hashes[1]!,
+          replacement_lines: ["BeSR"],
+          path: -1,
+        } as any,
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+      expect(await readFile(join(cwd, "sample.txt"), "utf-8")).toBe("aaa\nBeSR\nccc\n");
+    });
+  });
+
+  it("ignores an extra string path in anchor-only mode", async () => {
+    await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
+      const { pi, getTool } = makeFakePiRegistry();
+      regReplace(pi);
+      const tool = getTool("replace");
+      const hashes = await lineHashes("aaa\nbbb\nccc\n", join(cwd, "sample.txt"));
+
+      const result = await tool.execute(
+        "e1",
+        {
+          remove_from: hashes[1]!, remove_to: hashes[1]!,
+          replacement_lines: ["BeSR"],
+          path: "sample.txt",
+        },
+        undefined,
+        undefined,
+        { cwd } as any,
+      );
+
+      expect(result.content[0].text).toContain("Successfully replaced in sample.txt");
+    });
+  });
+
   it("replaces a single line via the replace_from/replace_to aliases", async () => {
     await withTempFile("sample.txt", "aaa\nbbb\nccc\n", async ({ cwd }) => {
       const { pi, getTool } = makeFakePiRegistry();
@@ -428,7 +475,7 @@ describe("regReplace", () => {
     )).rejects.toThrow(/\[E_BAD_REF\]/);
   });
 
-  it("rejects a passed path", async () => {
+  it("does not reject a passed path in anchor-only mode", async () => {
     const { pi, getTool } = makeFakePiRegistry();
     regReplace(pi);
     const tool = getTool("replace");
@@ -436,7 +483,7 @@ describe("regReplace", () => {
       "e1",
       { path: "sample.ts", remove_from: "PyBY", remove_to: "PyBY", replacement_lines: ["x"] } as any,
       undefined, undefined, { cwd: "/tmp" } as any,
-    )).rejects.toThrow(/E_BAD_SHAPE/);
+    )).rejects.toThrow(/E_STALE_ANCHOR/);
   });
 
   it("rethrows aborts from preview computation", async () => {

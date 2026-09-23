@@ -96,9 +96,11 @@ describe("gap dedup rows", () => {
 });
 
 describe("gap payload contract", () => {
-  it("rejects non-string path", () => {
-    expect(() => assertReq({ path: 42, remove_from: "Hasu", remove_to: "Hasu", replacement_lines: [] })).toThrow("[E_BAD_SHAPE]");
-    expect(() => assertInsertReq({ path: 42, anchor: "Hasu", direction: "after", lines: [] })).toThrow("[E_BAD_SHAPE]");
+  it("drops a non-string path instead of rejecting the edit", () => {
+    expect(() => assertReq({ path: -1, remove_from: "Hasu", remove_to: "Hasu", replacement_lines: [] })).not.toThrow();
+    expect(() => assertReq({ path: 42, remove_from: "Hasu", remove_to: "Hasu", replacement_lines: [] })).not.toThrow();
+    expect(() => assertInsertReq({ path: -1, anchor: "Hasu", direction: "after", lines: [] })).not.toThrow();
+    expect(() => assertInsertReq({ path: 42, anchor: "Hasu", direction: "after", lines: [] })).not.toThrow();
   });
   it("covers getPreviewInput catch via throwing getter", () => {
     const evil = {};

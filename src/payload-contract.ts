@@ -61,8 +61,8 @@ export function assertReq(request: unknown): asserts request is ReqParams {
     throw new Error("[E_BAD_SHAPE] Edit request must be an object.");
   }
   rejectUnknownFields(request, ROOT_KS, "Edit request");
-  if (request.path !== undefined && typeof request.path !== "string") {
-    throw new Error('[E_BAD_SHAPE] Edit request field "path" must be a string when provided.');
+  if (typeof request.path !== "string") {
+    delete request.path;
   }
   if (
     typeof request.remove_from !== "string" ||
@@ -125,8 +125,8 @@ export function assertInsertReq(request: unknown): asserts request is InsertReq 
     throw new Error("[E_BAD_SHAPE] Insert request must be an object.");
   }
   rejectUnknownFields(request, INSERT_KS, "Insert request");
-  if (request.path !== undefined && typeof request.path !== "string") {
-    throw new Error('[E_BAD_SHAPE] Insert request field "path" must be a string when provided.');
+  if (typeof request.path !== "string") {
+    delete request.path;
   }
   if (typeof request.anchor !== "string" || request.anchor.length === 0) {
     throw new Error('[E_BAD_SHAPE] Insert request requires an "anchor" string (4-char anchor from read output).');

@@ -236,20 +236,19 @@ describe("insert tool", () => {
     });
   });
 
-  it("names path when passed in anchor-only mode", async () => {
-    await withTempFile("sample.ts", "alpha\n", async ({ cwd }) => {
+  it("ignores path when passed in anchor-only mode", async () => {
+    await withTempFile("sample.ts", "alpha\n", async ({ cwd, path }) => {
       const { ctx, readTool, getTool } = setupIntegrationTest(cwd);
       const insertTool = getTool("insert");
       const readResult = await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx);
       const alphaHash = extractHash(getText(readResult).split("\n").find((l) => l.includes("│alpha"))!);
 
-      await expect(
-        insertTool.execute(
-          "i1",
-          { anchor: alphaHash, direction: "after", lines: ["x"], path: "sample.ts" } as any,
-          undefined, undefined, ctx,
-        ),
-      ).rejects.toThrow(/unknown or unsupported fields: path/);
+      await insertTool.execute(
+        "i1",
+        { anchor: alphaHash, direction: "after", lines: ["x"], path: "sample.ts" } as any,
+        undefined, undefined, ctx,
+      );
+      expect(await readFile(path, "utf-8")).toBe("alpha\nx\n");
     });
   });
 

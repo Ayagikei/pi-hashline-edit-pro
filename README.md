@@ -40,7 +40,7 @@ Replace a line by its anchor:
 
 The result is the post-edit diff with fresh anchors, so you can keep editing without re-reading. Lines you did not touch keep their anchors. After a `write`, an auto-read block gives you the new anchors. The most recent `replace` or `insert` on a file can be reverted, even after a restart.
 
-The extension registers five tools: `read`, `replace`, `insert`, `anchor_grep`, and `undo_last_change`. The built-in `edit` tool is disabled. `replace` and `insert` take no `path` parameter by default: the file is resolved from the anchors' session ownership alone, so an edit can only land on the file the anchors were served for. Opt in with `/hashline-config` to require `path` in `replace` and `insert` for RPC visibility (for example pimacs.el); anchors still resolve the target and `path` must match.
+The extension registers five tools: `read`, `replace`, `insert`, `anchor_grep`, and `undo_last_change`. The built-in `edit` tool is disabled. `replace` and `insert` take no `path` parameter by default: the file is resolved from the anchors' session ownership alone, so an edit can only land on the file the anchors were served for. A stray `path` — including non-string sentinels such as `-1` from some model APIs — is ignored in this mode. Opt in with `/hashline-config` to require `path` in `replace` and `insert` for RPC visibility (for example pimacs.el); anchors still resolve the target and `path` must match.
 
 ### read
 

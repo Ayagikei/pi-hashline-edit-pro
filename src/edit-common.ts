@@ -118,8 +118,8 @@ export interface PathRequirementInput {
 
 export async function resolveEditTargetWithRequirement(input: PathRequirementInput): Promise<string> {
   const { requirePath } = await readConfig();
-  if (!requirePath && input.providedPath !== undefined) {
-    throw new Error("[E_BAD_SHAPE] Edit request contains unknown or unsupported fields: path. Path resolution is anchor-only; retry without `path`.");
+  if (!requirePath) {
+    input = { ...input, providedPath: undefined };
   }
   if (requirePath && (typeof input.providedPath !== "string" || input.providedPath.length === 0)) {
     throw new Error('[E_BAD_SHAPE] Edit request requires a non-empty "path" string when require-path mode is on. Provide `path` matching the file the anchors were served for.');

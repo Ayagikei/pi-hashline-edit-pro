@@ -9,6 +9,9 @@ export function normalizeFilePath(record: Record<string, unknown>): void {
     record.path = record.file_path;
     delete record.file_path;
   }
+  if (typeof record.path !== "string") {
+    delete record.path;
+  }
 }
 
 export function normalizeAnchors(record: Record<string, unknown>): void {
