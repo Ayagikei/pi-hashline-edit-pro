@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
+import { join } from "path";
 import { lineHashes } from "../../src/hashline";
 import { withTempFile, makeFakePiRegistry, setupIntegrationTest, getText, extractHash, toolError } from "../support/fixtures";
 import { resolveTarget } from "../../src/fs-write";
@@ -202,6 +203,12 @@ describe("insert tool", () => {
   it("rejects a NUL byte in lines before any file I/O", () => {
     const nul = String.fromCharCode(0);
     expect(() => assertInsertReq({ anchor: "Hasu", direction: "after", text: nul })).toThrow(/NUL byte/);
+  });
+
+  it("drops a non-string path sentinel before anchor checks", () => {
+    const request = { path: -1, anchor: "Hasu", direction: "after" as const, text: "line" };
+    expect(() => assertInsertReq(request)).not.toThrow();
+    expect(request).not.toHaveProperty("path");
   });
 
   it("rejects a NUL byte in inserted lines", async () => {
@@ -579,6 +586,55 @@ describe("provided line endings", () => {
       const alphaHash = extractHash(text.split("\n").find((line) => line.includes("│alpha"))!);
       await getTool("insert").execute("i1", { anchor: alphaHash, direction: "after", text: ["I1\r\nI2"] }, undefined, undefined, ctx);
       expect(await readFile(path, "utf-8")).toBe("alpha\nI1\r\nI2\nbeta\n");
+    });
+  });
+});
+
+describe("path sentinel compatibility", () => {
+  it("inserts in anchor-only mode when path is a non-string sentinel", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd, path }) => {
+      const { ctx, readTool } = setupIntegrationTest(cwd);
+      const insertTool = buildInsertToolDef();
+      const betaHash = extractHash(getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx)).split("\n").find((line) => line.includes("│beta"))!);
+      const result = await insertTool.execute(
+        "i1",
+        { path: -1, anchor: betaHash, direction: "after", text: "added" },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const message = result.content[0];
+      expect(message?.type === "text" ? message.text : "").toContain("Successfully inserted");
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\nadded\n");
+    });
+  });
+
+  it("does not let a non-string path skip require-path mode", async () => {
+    await withTempFile("sample.ts", "alpha\nbeta\n", async ({ cwd, path }) => {
+      await mkdir(join(cwd, ".config", "pi-hashline-edit-pro"), { recursive: true });
+      await writeFile(
+        join(cwd, ".config", "pi-hashline-edit-pro", "config.json"),
+        JSON.stringify({ autoRead: true, requirePath: true }),
+        "utf-8",
+      );
+      const { ctx, readTool } = setupIntegrationTest(cwd);
+      const insertTool = buildInsertToolDef();
+      const betaHash = extractHash(getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx)).split("\n").find((line) => line.includes("│beta"))!);
+      expect(await toolError(() => insertTool.execute(
+        "i1",
+        { path: -1, anchor: betaHash, direction: "after", text: "added" },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/requires a non-empty "path"/);
+      await insertTool.execute(
+        "i2",
+        { path: "sample.ts", anchor: betaHash, direction: "after", text: "added" },
+        undefined,
+        undefined,
+        ctx,
+      );
+      expect(await readFile(path, "utf-8")).toBe("alpha\nbeta\nadded\n");
     });
   });
 });

@@ -57,15 +57,18 @@ export type RawReqParams = {
   text: string | string[];
 };
 
+
+function dropNonStringPath(request: Record<string, unknown>): void {
+  if (typeof request.path !== "string") delete request.path;
+}
+
 const ROOT_KS = new Set(["path", "remove_from", "remove_to", "text"]);
 export function assertReq(request: unknown): asserts request is ReqParams {
   if (!isRec(request)) {
     throw new Error("[E_BAD_SHAPE] Edit request must be an object.");
   }
   rejectUnknownFields(request, ROOT_KS, "Edit request");
-  if (request.path !== undefined && typeof request.path !== "string") {
-    throw new Error('[E_BAD_SHAPE] Edit request field "path" must be a string when provided.');
-  }
+  dropNonStringPath(request);
   if (
     typeof request.remove_from !== "string" ||
     typeof request.remove_to !== "string"
@@ -119,9 +122,7 @@ export function assertInsertReq(request: unknown): asserts request is InsertReq 
     throw new Error("[E_BAD_SHAPE] Insert request must be an object.");
   }
   rejectUnknownFields(request, INSERT_KS, "Insert request");
-  if (request.path !== undefined && typeof request.path !== "string") {
-    throw new Error('[E_BAD_SHAPE] Insert request field "path" must be a string when provided.');
-  }
+  dropNonStringPath(request);
   if (typeof request.anchor !== "string" || request.anchor.length === 0) {
     throw new Error('[E_BAD_SHAPE] Insert request requires an "anchor" string (4-char anchor from read output).');
   }

@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { rmSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { gcRegistrySidecars, resetRegistryForTests } from "../../src/anchor-registry";
+import { basename, join, resolve } from "node:path";
+import { gcRegistrySidecars, initRegistry, resetRegistryForTests } from "../../src/anchor-registry";
 import { sessionClaimsDir } from "../../src/paths";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -27,9 +28,14 @@ beforeEach(async () => {
   await mkdir(sessionClaimsDir());
 });
 
-afterEach(() => {
+afterEach(async () => {
+  const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.mocked(readdir).mockImplementation(actual.readdir as never);
+  vi.mocked(open).mockImplementation(actual.open as never);
+  vi.mocked(stat).mockImplementation(actual.stat as never);
+  vi.mocked(rm).mockImplementation(actual.rm as never);
   vi.unstubAllEnvs();
   resetRegistryForTests();
   rmSync(dir, { recursive: true, force: true });
@@ -83,5 +89,110 @@ describe("registry GC unexpected errors", () => {
       expect(errors).toHaveBeenCalledWith(expect.any(String), error);
     }
     expect(await readFile(path, "utf-8")).toBe(content);
+  });
+});
+
+describe("registry GC bounded inspection", () => {
+  it("inspects at most eight sidecars concurrently and deletes in listed order", async () => {
+    const names = Array.from({ length: 9 }, (_, index) => `${String(index).padStart(2, "0")}.registry.jsonl`);
+    const missing = join(dir, "batched-missing.jsonl");
+    const content = Buffer.from(`${JSON.stringify({ kind: "session", sessionFile: missing })}\n`);
+    vi.mocked(readdir).mockResolvedValueOnce(names as never);
+    let inflight = 0;
+    let max = 0;
+    const events: string[] = [];
+    vi.mocked(open).mockImplementation(((path: string) => {
+      const name = basename(path);
+      inflight += 1;
+      max = Math.max(max, inflight);
+      events.push(`start:${name}`);
+      const handle = {
+        read: async (buffer: Buffer, offset: number, length: number, position: number) => {
+          if (position >= content.length) return { bytesRead: 0 };
+          const bytesRead = Math.min(length, content.length - position);
+          content.copy(buffer, offset, position, position + bytesRead);
+          return { bytesRead };
+        },
+        close: async () => {},
+      };
+      return new Promise((resolve) => {
+        void Promise.resolve().then(() => {
+          inflight -= 1;
+          events.push(`end:${name}`);
+          resolve(handle as never);
+        });
+      });
+    }) as never);
+    vi.mocked(stat).mockImplementation((async (path: string) => {
+      if (path === missing) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+      return actual.stat(path);
+    }) as never);
+    const removed: string[] = [];
+    vi.mocked(rm).mockImplementation((async (path: string) => {
+      const name = basename(path);
+      removed.push(name);
+      events.push(`rm:${name}`);
+    }) as never);
+
+    await gcRegistrySidecars();
+
+    expect(max).toBe(8);
+    expect(max).toBeLessThanOrEqual(8);
+    expect(events.indexOf("rm:00.registry.jsonl")).toBeGreaterThan(events.indexOf("start:07.registry.jsonl"));
+    expect(events.indexOf("start:08.registry.jsonl")).toBeGreaterThan(events.indexOf("rm:07.registry.jsonl"));
+    expect(removed).toEqual(names);
+  });
+
+  it("does not read a sidecar that is already claimed", async () => {
+    const sessionFile = join(dir, "already-claimed.jsonl");
+    await writeFile(sessionFile, "");
+    const key = createHash("sha256").update(sessionFile).digest("hex").slice(0, 24);
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    await initRegistry(sessionFile);
+    await rm(sessionFile, { force: true });
+    const opened: string[] = [];
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    vi.mocked(open).mockImplementation((async (path: string, flags?: string) => {
+      opened.push(String(path));
+      return actual.open(path, flags);
+    }) as never);
+    await gcRegistrySidecars();
+    expect(opened).not.toContain(sidecar);
+    await expect(readFile(sidecar, "utf-8")).resolves.toContain("session");
+  });
+
+  it("keeps a sidecar claimed after inspection and before deletion", async () => {
+    const sessionFile = join(dir, "claimed-later.jsonl");
+    await writeFile(sessionFile, "");
+    const key = createHash("sha256").update(sessionFile).digest("hex").slice(0, 24);
+    const sidecar = join(sessionClaimsDir(), `${key}.registry.jsonl`);
+    const missing = join(dir, "claimed-later-missing.jsonl");
+    await writeFile(sidecar, `${JSON.stringify({ kind: "session", sessionFile: missing })}\n`);
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    let claimedDuringInspect = false;
+    vi.mocked(stat).mockImplementation((async (path: string) => {
+      if (path === missing) {
+        await initRegistry(sessionFile);
+        claimedDuringInspect = true;
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      }
+      return actual.stat(path);
+    }) as never);
+    await gcRegistrySidecars();
+    expect(claimedDuringInspect).toBe(true);
+    await expect(readFile(sidecar, "utf-8")).resolves.toContain("session");
+  });
+
+  it("removes compact files older than one hour and keeps newer ones", async () => {
+    const stale = join(sessionClaimsDir(), "stale.registry.jsonl.compact-old");
+    const fresh = join(sessionClaimsDir(), "fresh.registry.jsonl.compact-new");
+    await writeFile(stale, "old");
+    await writeFile(fresh, "new");
+    const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    await utimes(stale, oldTime, oldTime);
+    await gcRegistrySidecars();
+    await expect(readFile(stale, "utf-8")).rejects.toThrow();
+    await expect(readFile(fresh, "utf-8")).resolves.toBe("new");
   });
 });

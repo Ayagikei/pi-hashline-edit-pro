@@ -1,8 +1,9 @@
 import { join } from "path";
 import { describe, expect, it, vi } from "vitest";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { lineHashes } from "../../src/hashline";
 import { withTempFile, setupIntegrationTest, useTestHome, getText, extractHash, toolError } from "../support/fixtures";
+import { buildToolDef } from "../../src/replace";
 
 useTestHome();
 
@@ -422,6 +423,75 @@ describe("replace deletion keeps block separators", () => {
       const blankAfter = extractHash(rows[bbbIndex + 1]!);
       await editTool.execute("e1", { remove_from: blankBefore, remove_to: blankAfter, text: ["X"] }, undefined, undefined, ctx);
       expect(await readFile(path, "utf-8")).toBe("aaa\nX\nccc\n");
+    });
+  });
+});
+
+describe("path sentinel compatibility", () => {
+  it("replaces in anchor-only mode when path is a non-string sentinel", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\n", async ({ cwd, path }) => {
+      const { ctx, readTool } = setupIntegrationTest(cwd);
+      const editTool = buildToolDef();
+      const rows = getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx)).split("\n");
+      const anchor = extractHash(rows.find((row) => row.includes("│aaa"))!);
+      const result = await editTool.execute(
+        "e1",
+        { path: -1, remove_from: anchor, remove_to: anchor, text: "zzz" },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const message = result.content[0];
+      expect(message?.type === "text" ? message.text : "").toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("zzz\nbbb\n");
+    });
+  });
+
+  it("still rejects a string path in anchor-only mode", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\n", async ({ cwd }) => {
+      const { ctx, readTool } = setupIntegrationTest(cwd);
+      const editTool = buildToolDef();
+      const rows = getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx)).split("\n");
+      const anchor = extractHash(rows.find((row) => row.includes("│aaa"))!);
+      expect(await toolError(() => editTool.execute(
+        "e1",
+        { path: "sample.ts", remove_from: anchor, remove_to: anchor, text: "zzz" },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/unsupported fields: path/);
+    });
+  });
+
+  it("does not let a non-string path skip require-path mode", async () => {
+    await withTempFile("sample.ts", "aaa\nbbb\n", async ({ cwd, path }) => {
+      await mkdir(join(cwd, ".config", "pi-hashline-edit-pro"), { recursive: true });
+      await writeFile(
+        join(cwd, ".config", "pi-hashline-edit-pro", "config.json"),
+        JSON.stringify({ autoRead: true, requirePath: true }),
+        "utf-8",
+      );
+      const { ctx, readTool } = setupIntegrationTest(cwd);
+      const editTool = buildToolDef();
+      const rows = getText(await readTool.execute("r1", { path: "sample.ts" }, undefined, undefined, ctx)).split("\n");
+      const anchor = extractHash(rows.find((row) => row.includes("│aaa"))!);
+      expect(await toolError(() => editTool.execute(
+        "e1",
+        { path: -1, remove_from: anchor, remove_to: anchor, text: "zzz" },
+        undefined,
+        undefined,
+        ctx,
+      ))).toMatch(/requires a non-empty "path"/);
+      const result = await editTool.execute(
+        "e2",
+        { path: "sample.ts", remove_from: anchor, remove_to: anchor, text: "zzz" },
+        undefined,
+        undefined,
+        ctx,
+      );
+      const message = result.content[0];
+      expect(message?.type === "text" ? message.text : "").toContain("Successfully replaced");
+      expect(await readFile(path, "utf-8")).toBe("zzz\nbbb\n");
     });
   });
 });

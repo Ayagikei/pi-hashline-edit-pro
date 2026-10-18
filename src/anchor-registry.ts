@@ -1014,15 +1014,46 @@ export function resetRegistryForTests(): void {
   registries.clear();
 }
 
-async function readSidecarWindow(sidecar: string): Promise<{ text: string; filled: boolean }> {
+function sidecarPrefixHasNewline(bytes: Buffer): boolean {
+  return bytes.includes(0x0a);
+}
+
+function sessionRecordStop(): (bytes: Buffer) => boolean {
+  let lineStart = 0;
+  let scanned = 0;
+  return (bytes) => {
+    while (scanned < bytes.length) {
+      const newline = bytes.indexOf(0x0a, scanned);
+      if (newline < 0) {
+        scanned = bytes.length;
+        return false;
+      }
+      const sessionFile = parseSessionFileLine(bytes.toString("utf-8", lineStart, newline));
+      lineStart = newline + 1;
+      scanned = lineStart;
+      if (sessionFile !== undefined) return true;
+    }
+    return false;
+  };
+}
+
+async function readSidecarWindow(
+  sidecar: string,
+  stop?: (bytes: Buffer) => boolean,
+): Promise<{ text: string; filled: boolean }> {
   const handle = await open(sidecar, "r");
   const buffer = Buffer.alloc(SIDECAR_HEADER_BYTES);
   try {
     let readBytes = 0;
+    let fullReads = 0;
     while (readBytes < buffer.length) {
-      const { bytesRead } = await handle.read(buffer, readBytes, Math.min(SIDECAR_HEADER_CHUNK, buffer.length - readBytes), readBytes);
+      const growth = fullReads < 2 ? 0 : Math.min(fullReads - 1, 3);
+      const length = Math.min(SIDECAR_HEADER_CHUNK << growth, buffer.length - readBytes);
+      const { bytesRead } = await handle.read(buffer, readBytes, length, readBytes);
       if (bytesRead === 0) break;
       readBytes += bytesRead;
+      if (bytesRead === length) fullReads += 1;
+      if (stop?.(buffer.subarray(0, readBytes))) break;
     }
     return { text: buffer.subarray(0, readBytes).toString("utf-8"), filled: readBytes === buffer.length };
   } finally {
@@ -1031,14 +1062,14 @@ async function readSidecarWindow(sidecar: string): Promise<{ text: string; fille
 }
 
 export async function readSidecarHeader(sidecar: string): Promise<string> {
-  const { text, filled } = await readSidecarWindow(sidecar);
+  const { text, filled } = await readSidecarWindow(sidecar, sidecarPrefixHasNewline);
   const newline = text.indexOf("\n");
   if (newline >= 0) return text.slice(0, newline);
   return filled ? "" : text;
 }
 
 export async function readSidecarSessionFile(sidecar: string): Promise<string | undefined> {
-  const { text } = await readSidecarWindow(sidecar);
+  const { text } = await readSidecarWindow(sidecar, sessionRecordStop());
   const lastNewline = text.lastIndexOf("\n");
   const complete = lastNewline >= 0 ? text.slice(0, lastNewline).split("\n") : [];
   for (const line of complete) {
@@ -1069,6 +1100,50 @@ function isExpectedAccessError(error: unknown): boolean {
   return code === "EPERM" || code === "EACCES";
 }
 
+const SIDECAR_GC_BATCH = 8;
+
+type SidecarDecision =
+  | { action: "ignore" }
+  | { action: "delete" }
+  | { action: "log"; error: unknown };
+
+async function inspectUnclaimedSidecar(sidecar: string): Promise<SidecarDecision> {
+  try {
+    const sessionFile = await readSidecarSessionFile(sidecar);
+    if (sessionFile === undefined) return { action: "ignore" };
+    await stat(sessionFile);
+    return { action: "ignore" };
+  } catch (error) {
+    if (errCode(error) === "ENOENT") return { action: "delete" };
+    if (isExpectedAccessError(error)) return { action: "ignore" };
+    return { action: "log", error };
+  }
+}
+
+async function applySidecarDecision(sidecar: string, decision: SidecarDecision): Promise<void> {
+  if (decision.action === "log") {
+    console.error("Failed to inspect registry sidecar:", decision.error);
+    return;
+  }
+  if (decision.action !== "delete") return;
+  if (isClaimedSidecar(sidecar)) return;
+  try {
+    await rm(sidecar, { force: true });
+  } catch (removeError) {
+    if (!isExpectedAccessError(removeError)) throw removeError;
+  }
+}
+
+async function removeStaleCompact(name: string): Promise<void> {
+  const tmpPath = join(sessionClaimsDir(), name);
+  try {
+    const tmpStat = await stat(tmpPath);
+    if (Date.now() - tmpStat.mtimeMs > 60 * 60 * 1000) await rm(tmpPath, { force: true });
+  } catch (error) {
+    if (errCode(error) !== "ENOENT" && !isExpectedAccessError(error)) console.error("Failed to inspect registry sidecar:", error);
+  }
+}
+
 export async function gcRegistrySidecars(): Promise<void> {
   let names: string[];
   try {
@@ -1077,34 +1152,26 @@ export async function gcRegistrySidecars(): Promise<void> {
     if (errCode(error) !== "ENOENT" && !isExpectedAccessError(error)) console.error("Failed to list registry sidecars:", error);
     return;
   }
+  const pending: string[] = [];
+  const flush = async (): Promise<void> => {
+    if (pending.length === 0) return;
+    const batch = pending.splice(0, pending.length);
+    const decisions = await Promise.all(batch.map(async (name) => {
+      const sidecar = join(sessionClaimsDir(), name);
+      if (isClaimedSidecar(sidecar)) return { sidecar, decision: { action: "ignore" as const } };
+      return { sidecar, decision: await inspectUnclaimedSidecar(sidecar) };
+    }));
+    for (const item of decisions) await applySidecarDecision(item.sidecar, item.decision);
+  };
   for (const name of names) {
     if (name.includes(`${SIDECAR_SUFFIX}.compact-`)) {
-      const tmpPath = join(sessionClaimsDir(), name);
-      try {
-        const tmpStat = await stat(tmpPath);
-        if (Date.now() - tmpStat.mtimeMs > 60 * 60 * 1000) await rm(tmpPath, { force: true });
-      } catch (error) {
-        if (errCode(error) !== "ENOENT" && !isExpectedAccessError(error)) console.error("Failed to inspect registry sidecar:", error);
-      }
+      await flush();
+      await removeStaleCompact(name);
       continue;
     }
     if (!name.endsWith(SIDECAR_SUFFIX)) continue;
-    const sidecar = join(sessionClaimsDir(), name);
-    if (isClaimedSidecar(sidecar)) continue;
-    try {
-      const sessionFile = await readSidecarSessionFile(sidecar);
-      if (sessionFile === undefined) continue;
-      await stat(sessionFile);
-    } catch (error) {
-      if (errCode(error) === "ENOENT") {
-        try {
-          await rm(sidecar, { force: true });
-        } catch (removeError) {
-          if (!isExpectedAccessError(removeError)) throw removeError;
-        }
-      } else if (!isExpectedAccessError(error)) {
-        console.error("Failed to inspect registry sidecar:", error);
-      }
-    }
+    pending.push(name);
+    if (pending.length === SIDECAR_GC_BATCH) await flush();
   }
+  await flush();
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdir, readFile, rm, writeFile } from "fs/promises";
+import { mkdir, open, readFile, rm, writeFile } from "fs/promises";
 import { createHash } from "crypto";
 import { join } from "path";
 import {
@@ -643,5 +643,271 @@ describe("anchor registry", () => {
     adoptAnchors("b.ts", new Map([[anchor, "ckB"]]));
     expect(ownerOf(anchor)).toEqual({ path: "a.ts", checksum: "ckA" });
     expect(servedForPath("b.ts")?.has(anchor) ?? false).toBe(false);
+  });
+});
+
+
+const SIDECAR_HEADER_CHUNK = 4096;
+
+async function bytesReadBySidecar(run: () => Promise<void>): Promise<number> {
+  await mkdir(sessionClaimsDir(), { recursive: true });
+  const probe = await open(join(sessionClaimsDir(), "read-probe.bin"), "w+");
+  const proto = Object.getPrototypeOf(probe) as {
+    read: (this: unknown, ...args: never[]) => Promise<{ bytesRead?: number }>;
+  };
+  await probe.close();
+  const original = proto.read;
+  let bytes = 0;
+  const spy = vi.spyOn(proto, "read").mockImplementation(async function (this: unknown, ...args: never[]) {
+    const result = await original.call(this, ...args);
+    bytes += result.bytesRead ?? 0;
+    return result;
+  });
+  try {
+    await run();
+    return bytes;
+  } finally {
+    spy.mockRestore();
+  }
+}
+
+function chunkCeiling(bytes: number): number {
+  return Math.ceil(bytes / SIDECAR_HEADER_CHUNK) * SIDECAR_HEADER_CHUNK;
+}
+
+describe("sidecar prefix reads", () => {
+  it("does not read a later allocate tail once the first chunk holds a session record", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "early-session.registry.jsonl");
+    const sessionFile = "/early-live.jsonl";
+    const header = `${JSON.stringify({ kind: "session", sessionFile })}\n`;
+    const tail = `${JSON.stringify({ kind: "allocate", path: "/a.ts", rows: [["abcd", "k".repeat(70000)]] })}\n`;
+    expect(Buffer.byteLength(header)).toBeLessThan(SIDECAR_HEADER_CHUNK);
+    expect(Buffer.byteLength(tail)).toBeGreaterThan(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, header + tail);
+    let found: string | undefined;
+    const bytes = await bytesReadBySidecar(async () => {
+      found = await readSidecarSessionFile(sidecar);
+    });
+    expect(found).toBe(sessionFile);
+    expect(bytes).toBeLessThanOrEqual(SIDECAR_HEADER_CHUNK);
+  });
+
+  it("stops a header read at the first complete line", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "early-header.registry.jsonl");
+    const header = JSON.stringify({ kind: "session", sessionFile: "/header-live.jsonl" });
+    const tail = "z".repeat(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${header}\n${tail}`);
+    let found = "";
+    const bytes = await bytesReadBySidecar(async () => {
+      found = await readSidecarHeader(sidecar);
+    });
+    expect(found).toBe(header);
+    expect(bytes).toBeLessThanOrEqual(SIDECAR_HEADER_CHUNK);
+    expect(bytes).toBeLessThan(Buffer.byteLength(`${header}\n${tail}`));
+  });
+
+  it("reads a header that crosses chunks and then stops before the allocate tail", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "long-header-stop.registry.jsonl");
+    const header = JSON.stringify({ kind: "session", sessionFile: `你${"x".repeat(5000)}` });
+    const tail = "y".repeat(SIDECAR_HEADER_BYTES);
+    expect(Buffer.byteLength(header)).toBeGreaterThan(SIDECAR_HEADER_CHUNK);
+    expect(Buffer.byteLength(header) + 1).toBeLessThan(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${header}\n${tail}`);
+    let found = "";
+    const bytes = await bytesReadBySidecar(async () => {
+      found = await readSidecarHeader(sidecar);
+    });
+    expect(found).toBe(header);
+    expect(bytes).toBeGreaterThan(SIDECAR_HEADER_CHUNK);
+    expect(bytes).toBeLessThanOrEqual(chunkCeiling(Buffer.byteLength(header) + 1));
+  });
+
+  it("finds a legacy session after an allocate line without reading the rest of the file", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "legacy-second-line.registry.jsonl");
+    const allocate = JSON.stringify({ kind: "allocate", path: "/legacy.ts", rows: [["abcd", "c".repeat(5000)]] });
+    const sessionFile = "/legacy-live.jsonl";
+    const session = JSON.stringify({ kind: "session", sessionFile });
+    const tail = JSON.stringify({ kind: "allocate", path: "/tail.ts", rows: [["efgh", "d".repeat(40000)]] });
+    const prefix = `${allocate}\n${session}\n`;
+    expect(Buffer.byteLength(allocate)).toBeGreaterThan(SIDECAR_HEADER_CHUNK);
+    expect(Buffer.byteLength(prefix)).toBeLessThan(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, prefix + tail);
+    let found: string | undefined;
+    const bytes = await bytesReadBySidecar(async () => {
+      found = await readSidecarSessionFile(sidecar);
+    });
+    expect(found).toBe(sessionFile);
+    expect(bytes).toBeGreaterThan(SIDECAR_HEADER_CHUNK);
+    expect(bytes).toBeLessThanOrEqual(chunkCeiling(Buffer.byteLength(prefix)));
+  });
+
+  it("preserves a session path whose UTF-8 character crosses a chunk boundary", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "utf8-chunk.registry.jsonl");
+    const head = '{"kind":"session","sessionFile":"';
+    const markerAt = SIDECAR_HEADER_CHUNK - 1;
+    const pad = markerAt - Buffer.byteLength(head);
+    expect(pad).toBeGreaterThan(0);
+    const sessionFile = `${"a".repeat(pad)}你/live.jsonl`;
+    const line = `${head}${sessionFile}"}`;
+    expect(Buffer.byteLength(line.slice(0, line.indexOf("你")))).toBe(markerAt);
+    const tail = `\n${"b".repeat(SIDECAR_HEADER_BYTES)}`;
+    await writeFile(sidecar, line + tail);
+    let found: string | undefined;
+    const bytes = await bytesReadBySidecar(async () => {
+      found = await readSidecarSessionFile(sidecar);
+    });
+    expect(found).toBe(sessionFile);
+    expect(bytes).toBeGreaterThan(SIDECAR_HEADER_CHUNK);
+    expect(bytes).toBeLessThanOrEqual(chunkCeiling(Buffer.byteLength(line) + 1));
+  });
+
+  it("reads a session record that has no trailing newline at EOF", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "eof-session.registry.jsonl");
+    const sessionFile = "/eof-live.jsonl";
+    const line = JSON.stringify({ kind: "session", sessionFile });
+    await writeFile(sidecar, line);
+    await expect(readSidecarSessionFile(sidecar)).resolves.toBe(sessionFile);
+    await expect(readSidecarHeader(sidecar)).resolves.toBe(line);
+  });
+
+  it("reads a session record whose newline is the last byte of the 64KiB window", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "window-end.registry.jsonl");
+    const sessionFile = "/window-end.jsonl";
+    const record = JSON.stringify({ kind: "session", sessionFile });
+    const pad = SIDECAR_HEADER_BYTES - 1 - Buffer.byteLength(record);
+    expect(pad).toBeGreaterThan(0);
+    const prefix = `${" ".repeat(pad)}${record}\n`;
+    expect(Buffer.byteLength(prefix)).toBe(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${prefix}ignored`);
+    await expect(readSidecarSessionFile(sidecar)).resolves.toBe(sessionFile);
+  });
+
+  it("ignores a session record cut off by the 64KiB window", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "window-cut.registry.jsonl");
+    const record = JSON.stringify({
+      kind: "session",
+      sessionFile: `/cut-${"x".repeat(SIDECAR_HEADER_BYTES)}.jsonl`,
+    });
+    expect(Buffer.byteLength(record)).toBeGreaterThan(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${record}\n`);
+    await expect(readSidecarSessionFile(sidecar)).resolves.toBeUndefined();
+    await expect(readSidecarHeader(sidecar)).resolves.toBe("");
+  });
+
+  it("parses each completed allocate line once per scan when later chunks have no session", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "allocate-only-chunks.registry.jsonl");
+    const lines = Array.from({ length: 6 }, (_, id) => {
+      const marker = `ALLOC-${String(id).padStart(2, "0")}-`;
+      const base = JSON.stringify({ kind: "allocate", path: `/alloc-${id}.ts`, rows: [["abcd", marker]] });
+      const pad = SIDECAR_HEADER_CHUNK - 1 - Buffer.byteLength(base);
+      expect(pad).toBeGreaterThan(0);
+      const line = JSON.stringify({
+        kind: "allocate",
+        path: `/alloc-${id}.ts`,
+        rows: [["abcd", marker + "x".repeat(pad)]],
+      });
+      expect(Buffer.byteLength(line)).toBe(SIDECAR_HEADER_CHUNK - 1);
+      return line;
+    });
+    await writeFile(sidecar, `${lines.join("\n")}\n`);
+    const counts = new Map(lines.map((line) => [line, 0]));
+    const original = JSON.parse;
+    const spy = vi.spyOn(JSON, "parse").mockImplementation((text: string) => {
+      const seen = counts.get(text);
+      if (seen !== undefined) counts.set(text, seen + 1);
+      return original(text);
+    });
+    try {
+      await expect(readSidecarSessionFile(sidecar)).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    expect([...counts.values()]).toEqual(lines.map(() => 2));
+  });
+
+  it("reads a full 64KiB window without a session in five normal reads", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "full-window-reads.registry.jsonl");
+    await writeFile(sidecar, `${"x".repeat(SIDECAR_HEADER_BYTES)}Y`);
+    const probe = await open(join(sessionClaimsDir(), "full-window-probe.bin"), "w+");
+    const proto = Object.getPrototypeOf(probe) as {
+      read: (this: unknown, ...args: never[]) => Promise<{ bytesRead?: number }>;
+    };
+    await probe.close();
+    const original = proto.read;
+    const requests: number[] = [];
+    let bytes = 0;
+    const spy = vi.spyOn(proto, "read").mockImplementation(async function (this: unknown, ...args: never[]) {
+      const requested = args[2] as unknown as number;
+      const result = await original.call(this, ...args);
+      requests.push(requested);
+      bytes += result.bytesRead ?? 0;
+      return result;
+    });
+    try {
+      await expect(readSidecarSessionFile(sidecar)).resolves.toBeUndefined();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(bytes).toBe(SIDECAR_HEADER_BYTES);
+    expect(requests).toEqual([4096, 4096, 8192, 16384, 32768]);
+    expect(requests.length).toBeLessThanOrEqual(5);
+  });
+
+  it("assembles a session when every read returns fewer bytes than requested", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "short-read-session.registry.jsonl");
+    const sessionFile = "/short-你.jsonl";
+    const line = JSON.stringify({ kind: "session", sessionFile });
+    await writeFile(sidecar, `${line}\n${"z".repeat(SIDECAR_HEADER_BYTES)}`);
+    const probe = await open(join(sessionClaimsDir(), "short-read-probe.bin"), "w+");
+    const proto = Object.getPrototypeOf(probe) as {
+      read: (this: unknown, ...args: never[]) => Promise<{ bytesRead?: number }>;
+    };
+    await probe.close();
+    const original = proto.read;
+    const calls: Array<{ requested: number; bytesRead: number; position: number }> = [];
+    const spy = vi.spyOn(proto, "read").mockImplementation(async function (this: unknown, ...args: never[]) {
+      const requested = args[2] as unknown as number;
+      const position = args[3] as unknown as number;
+      const capped = Math.min(requested, 2) as never;
+      const result = await original.call(this, args[0], args[1], capped, args[3]);
+      const bytesRead = result.bytesRead ?? 0;
+      calls.push({ requested, bytesRead, position });
+      return result;
+    });
+    let found: string | undefined;
+    try {
+      found = await readSidecarSessionFile(sidecar);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(found).toBe(sessionFile);
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.every((call) => call.bytesRead < call.requested)).toBe(true);
+    expect(calls[0]?.position).toBe(0);
+    for (let index = 1; index < calls.length; index += 1) {
+      expect(calls[index]?.position).toBe((calls[index - 1]?.position ?? 0) + (calls[index - 1]?.bytesRead ?? 0));
+    }
+  });
+
+  it("reads an exact 64KiB session record that has no newline inside the window", async () => {
+    await mkdir(sessionClaimsDir(), { recursive: true });
+    const sidecar = join(sessionClaimsDir(), "exact-window.registry.jsonl");
+    const sessionFile = "/exact-window.jsonl";
+    const record = JSON.stringify({ kind: "session", sessionFile });
+    const content = `${" ".repeat(SIDECAR_HEADER_BYTES - Buffer.byteLength(record))}${record}`;
+    expect(Buffer.byteLength(content)).toBe(SIDECAR_HEADER_BYTES);
+    await writeFile(sidecar, `${content}\nextra`);
+    await expect(readSidecarSessionFile(sidecar)).resolves.toBe(sessionFile);
   });
 });

@@ -21,6 +21,12 @@ describe("assertReq", () => {
       .not.toThrow();
   });
 
+  it("drops a non-string path sentinel before anchor checks", () => {
+    const request = { path: -1, remove_from: "ATIm", remove_to: "BeSR", text: "new" };
+    expect(() => assertReq(request)).not.toThrow();
+    expect(request).not.toHaveProperty("path");
+  });
+
 	it("throws for a passed file_path", () => {
 		expect(() => assertReq({ file_path: "test.txt", remove_from: "ATIm", remove_to: "BeSR", text: ["new"] }))
 			.toThrow("[E_BAD_SHAPE]");
